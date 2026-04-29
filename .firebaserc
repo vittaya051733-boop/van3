@@ -1,0 +1,20 @@
+{
+  "projects": {
+    "default": "van-merchant"
+  },
+  "targets": {
+    "van-merchant": {
+      "hosting": {
+        "van3": [
+          "van3"
+        ]
+      },
+      "storage": {
+        "van3": [
+          "van-merchant-van3-storage-802503541368"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

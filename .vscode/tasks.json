@@ -1,0 +1,66 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Deploy Storage Isolated (van3)",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"scripts/deploy-storage-isolated.ps1"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Deploy Firestore Isolated (van3)",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"scripts/deploy-firestore-isolated.ps1"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Deploy Isolated (van3)",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"scripts/deploy-isolated.ps1"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "DO NOT USE - Deploy Rules (van-merchant)",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"scripts/deploy-van-merchant-rules.ps1"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "Run van3 by AVD name",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"scripts/run-van3-by-avd.ps1"
+			],
+			"isBackground": true
+		}
+	]
+}
