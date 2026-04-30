@@ -1,6 +1,11 @@
+import 'dart:io';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'call_screen.dart';
@@ -34,13 +39,17 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
   ];
 
   final TextEditingController _messageController = TextEditingController();
+  final ImagePicker _imagePicker = ImagePicker();
   bool _sending = false;
+  bool _uploading = false;
   bool _startingCall = false;
   bool _initializingChat = true;
   bool _markingAsRead = false;
   String? _initError;
   bool _resolvingPeerPhone = false;
   String? _peerPhone;
+
+  FirebaseStorage get _storage => FirebaseStorage.instance;
 
   String? get _myUid => FirebaseAuth.instance.currentUser?.uid;
 
@@ -374,6 +383,12 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
+      final senderProfile = await _buildCurrentUserProfile();
+      await _sendChatNotification(
+        messageText: text,
+        senderName: senderProfile.displayName,
+      );
+
       _messageController.clear();
     } catch (e) {
       if (mounted) {
@@ -386,6 +401,210 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
         setState(() => _sending = false);
       }
     }
+  }
+
+  Future<void> _openAttachmentSheet() async {
+    if (_uploading) {
+      return;
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('เลือกรูปจากคลังภาพ'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickImage(ImageSource.gallery);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_camera),
+              title: const Text('ถ่ายรูป'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickImage(ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.videocam),
+              title: const Text('เลือกวิดีโอ'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickVideo();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.attach_file),
+              title: const Text('เลือกไฟล์เอกสาร'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickFile();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickImage(ImageSource source) async {
+    final file = await _imagePicker.pickImage(source: source, imageQuality: 85);
+    if (file == null) {
+      return;
+    }
+    await _uploadFile(
+      File(file.path),
+      type: 'image',
+      fileName: file.name,
+    );
+  }
+
+  Future<void> _pickVideo() async {
+    final file = await _imagePicker.pickVideo(source: ImageSource.gallery);
+    if (file == null) {
+      return;
+    }
+    await _uploadFile(
+      File(file.path),
+      type: 'video',
+      fileName: file.name,
+    );
+  }
+
+  Future<void> _pickFile() async {
+    final result = await FilePicker.platform.pickFiles(
+      withData: false,
+      allowMultiple: false,
+    );
+    if (result == null) {
+      return;
+    }
+
+    final picked = result.files.single;
+    if (picked.path == null) {
+      return;
+    }
+
+    await _uploadFile(
+      File(picked.path!),
+      type: 'file',
+      fileName: picked.name,
+    );
+  }
+
+  Future<void> _uploadFile(
+    File file, {
+    required String type,
+    required String fileName,
+  }) async {
+    final myUid = _myUid;
+    if (myUid == null || _uploading) {
+      return;
+    }
+
+    setState(() => _uploading = true);
+    try {
+      await _ensureChatDoc();
+      final chatRef = FirebaseFirestore.instance.collection('chats').doc(_chatId);
+      final storageRef = _storage
+          .ref()
+          .child('chat_uploads/$_chatId/${DateTime.now().millisecondsSinceEpoch}_$fileName');
+      await storageRef.putFile(file);
+      final downloadUrl = await storageRef.getDownloadURL();
+      final fileSize = await file.length();
+      final summaryText = _summaryForType(type, fileName);
+
+      await chatRef.collection('messages').add({
+        'senderId': myUid,
+        'receiverId': widget.peerUid,
+        'type': type,
+        'text': summaryText,
+        'mediaUrl': downloadUrl,
+        'fileName': fileName,
+        'fileSize': fileSize,
+        if (widget.orderId?.trim().isNotEmpty ?? false) 'orderId': widget.orderId!.trim(),
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      await chatRef.set({
+        'lastMessage': summaryText,
+        'lastMessageType': type,
+        'lastSenderId': myUid,
+        'lastMessageSender': myUid,
+        'lastMessageAt': FieldValue.serverTimestamp(),
+        if (widget.orderId?.trim().isNotEmpty ?? false) 'orderId': widget.orderId!.trim(),
+        'unreadCounts.$myUid': 0,
+        'unreadCounts.${widget.peerUid}': FieldValue.increment(1),
+        'lastReadAt.$myUid': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      final senderProfile = await _buildCurrentUserProfile();
+      await _sendChatNotification(
+        messageText: summaryText,
+        senderName: senderProfile.displayName,
+      );
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('อัปโหลดไฟล์ไม่สำเร็จ: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _uploading = false);
+      }
+    }
+  }
+
+  String _summaryForType(String type, String fileName) {
+    switch (type) {
+      case 'image':
+        return 'ส่งรูปภาพ';
+      case 'video':
+        return 'ส่งวิดีโอ';
+      case 'file':
+        return 'ส่งไฟล์ $fileName';
+      default:
+        return fileName;
+    }
+  }
+
+  Future<void> _sendChatNotification({
+    required String messageText,
+    required String senderName,
+  }) async {
+    final myUid = _myUid;
+    if (myUid == null || myUid.isEmpty) {
+      return;
+    }
+
+    final trimmed = messageText.trim();
+    if (trimmed.isEmpty) {
+      return;
+    }
+
+    await FirebaseFirestore.instance.collection('app_notifications').add({
+      'targetApp': 'van2',
+      'recipientUid': widget.peerUid,
+      'chatId': _chatId,
+      if (widget.orderId?.trim().isNotEmpty ?? false) 'orderId': widget.orderId!.trim(),
+      'title': widget.peerLabel,
+      'body': trimmed,
+      'message': trimmed,
+      'senderId': myUid,
+      'senderName': senderName.trim().isEmpty ? 'ไรเดอร์' : senderName.trim(),
+      'read': false,
+      'createdAt': FieldValue.serverTimestamp(),
+      'source': 'van3_rider',
+      'sourceApp': 'van3_rider',
+      'action': 'chat_message',
+    });
   }
 
   @override
@@ -468,6 +687,7 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
                     final data = docs[index].data();
                     final text = (data['text'] as String?)?.trim() ?? '';
                     final senderId = (data['senderId'] as String?) ?? '';
+                    final type = (data['type'] as String?)?.trim() ?? 'text';
                     final mine = senderId == myUid;
 
                     return Align(
@@ -479,11 +699,13 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
                           color: mine ? const Color(0xFFFF8A00) : const Color(0xFFF3F4F6),
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        child: Text(
-                          text,
-                          style: TextStyle(
-                            color: mine ? Colors.white : const Color(0xFF111827),
-                          ),
+                        child: _ChatMessageContent(
+                          type: type,
+                          text: text,
+                          fileName: (data['fileName'] as String?)?.trim(),
+                          mediaUrl: (data['mediaUrl'] as String?)?.trim(),
+                          fileSize: data['fileSize'] as int?,
+                          isMine: mine,
                         ),
                       ),
                     );
@@ -492,16 +714,24 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
               },
             ),
           ),
+          if (_uploading)
+            const LinearProgressIndicator(minHeight: 2),
           SafeArea(
             top: false,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
               child: Row(
                 children: [
+                  IconButton(
+                    icon: const Icon(Icons.add_circle_outline),
+                    onPressed: _uploading ? null : _openAttachmentSheet,
+                  ),
                   Expanded(
                     child: TextField(
                       controller: _messageController,
                       textInputAction: TextInputAction.send,
+                      minLines: 1,
+                      maxLines: 4,
                       onSubmitted: (_) => _sendText(),
                       decoration: const InputDecoration(
                         hintText: 'พิมพ์ข้อความ...',
@@ -522,6 +752,131 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
                   ),
                 ],
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChatMessageContent extends StatelessWidget {
+  const _ChatMessageContent({
+    required this.type,
+    required this.text,
+    required this.fileName,
+    required this.mediaUrl,
+    required this.fileSize,
+    required this.isMine,
+  });
+
+  final String type;
+  final String text;
+  final String? fileName;
+  final String? mediaUrl;
+  final int? fileSize;
+  final bool isMine;
+
+  @override
+  Widget build(BuildContext context) {
+    final textColor = isMine ? Colors.white : const Color(0xFF111827);
+    switch (type) {
+      case 'image':
+        return GestureDetector(
+          onTap: mediaUrl == null || mediaUrl!.isEmpty ? null : () => _openUrl(mediaUrl!),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: mediaUrl == null || mediaUrl!.isEmpty
+                ? Text(text, style: TextStyle(color: textColor))
+                : Image.network(
+                    mediaUrl!,
+                    width: 220,
+                    height: 220,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Text(text, style: TextStyle(color: textColor)),
+                  ),
+          ),
+        );
+      case 'video':
+        return _AttachmentTile(
+          icon: Icons.videocam,
+          label: fileName ?? 'ไฟล์วิดีโอ',
+          subtitle: _formatSize(fileSize),
+          textColor: textColor,
+          onTap: mediaUrl == null || mediaUrl!.isEmpty ? null : () => _openUrl(mediaUrl!),
+        );
+      case 'file':
+        return _AttachmentTile(
+          icon: Icons.description,
+          label: fileName ?? 'ไฟล์แนบ',
+          subtitle: _formatSize(fileSize),
+          textColor: textColor,
+          onTap: mediaUrl == null || mediaUrl!.isEmpty ? null : () => _openUrl(mediaUrl!),
+        );
+      default:
+        return Text(
+          text,
+          style: TextStyle(color: textColor),
+        );
+    }
+  }
+
+  String _formatSize(int? bytes) {
+    if (bytes == null || bytes <= 0) {
+      return '';
+    }
+    const kb = 1024;
+    const mb = kb * 1024;
+    if (bytes >= mb) {
+      return '${(bytes / mb).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / kb).toStringAsFixed(1)} KB';
+  }
+
+  Future<void> _openUrl(String url) async {
+    final uri = Uri.parse(url);
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+}
+
+class _AttachmentTile extends StatelessWidget {
+  const _AttachmentTile({
+    required this.icon,
+    required this.label,
+    required this.subtitle,
+    required this.textColor,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final String subtitle;
+  final Color textColor;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: textColor, size: 24),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(color: textColor, fontWeight: FontWeight.w600),
+                ),
+                if (subtitle.isNotEmpty)
+                  Text(
+                    subtitle,
+                    style: TextStyle(color: textColor.withValues(alpha: 0.75), fontSize: 12),
+                  ),
+              ],
             ),
           ),
         ],

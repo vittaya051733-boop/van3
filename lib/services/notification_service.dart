@@ -311,7 +311,7 @@ class NotificationService {
     required String callerName,
     String? callerPhotoUrl,
     required bool isVideo,
-    int retryCount = 8,
+    int retryCount = 30,
     bool minimizeOnEnd = false,
   }) {
     if (channelId.isEmpty || token == null || token.isEmpty) {
@@ -328,10 +328,9 @@ class NotificationService {
     }
 
     final navigatorState = Van3RiderApp.navigatorKey.currentState;
-    final context = navigatorState?.context;
-    if (context == null) {
+    if (navigatorState == null) {
       if (retryCount <= 0) {
-        debugPrint('Navigator context unavailable, cannot open CallScreen');
+        debugPrint('Navigator not ready, cannot open CallScreen');
         return;
       }
       Future.delayed(const Duration(milliseconds: 300), () {
@@ -357,7 +356,7 @@ class NotificationService {
       _shouldReturnAppToBackground = true;
     }
 
-    navigatorState!.push(
+    navigatorState.push(
       MaterialPageRoute(
         fullscreenDialog: true,
         builder: (_) => CallScreen(

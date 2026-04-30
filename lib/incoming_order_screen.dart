@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -515,6 +516,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
         .whereType<Map>()
         .cast<Map<dynamic, dynamic>>()
         .toList(growable: false);
+    final fallbackShopImageUrl = _readShopImageUrl(data);
 
     return rawProducts.map((item) {
       final imageUrl = (item['imageUrl'] ?? item['photoUrl'] ?? item['image'] ?? item['productImage'])
@@ -524,7 +526,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
         name: (item['name'] ?? item['productName'] ?? '-').toString(),
         quantity: int.tryParse((item['quantity'] ?? 0).toString()) ?? 0,
         unitPrice: double.tryParse((item['unitPrice'] ?? item['price'] ?? 0).toString()) ?? 0,
-        imageUrl: imageUrl == null || imageUrl.isEmpty ? null : imageUrl,
+        imageUrl: imageUrl == null || imageUrl.isEmpty ? fallbackShopImageUrl : imageUrl,
         note: (item['note'] ?? item['specialRequest'] ?? '').toString().trim(),
       );
     }).toList(growable: false);
@@ -573,36 +575,6 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
     return <String, double>{'lat': lat, 'lng': lng};
   }
 
-  Future<String?> _resolveShopPhone(Map<String, dynamic> data) async {
-    final direct = (data['shopPhone'] as String?)?.trim();
-    if (direct != null && direct.isNotEmpty) {
-      return direct;
-    }
-
-    final ownerUid = _readShopOwnerUid(data);
-    if (ownerUid == null || ownerUid.isEmpty) {
-      return null;
-    }
-
-    for (final collection in _registrationCollections) {
-      try {
-        final doc = await FirebaseFirestore.instance.collection(collection).doc(ownerUid).get();
-        if (!doc.exists) continue;
-        final map = doc.data();
-        final phone = (map?['phone'] as String?)?.trim() ??
-            (map?['phoneNumber'] as String?)?.trim() ??
-            (map?['contactPhone'] as String?)?.trim();
-        if (phone != null && phone.isNotEmpty) {
-          return phone;
-        }
-      } catch (_) {
-        // Try next collection.
-      }
-    }
-
-    return null;
-  }
-
   Future<double?> _resolveRiderToShopDistanceKm(Map<String, dynamic> data) async {
     final riderSearch = data['riderSearch'];
     if (riderSearch is Map<String, dynamic>) {
@@ -617,18 +589,60 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
       return null;
     }
 
-    final riderPosition = await _getFreshCurrentPosition();
-    if (riderPosition == null) {
+    final riderCoords = await _resolveRiderCoordinates(data);
+    if (riderCoords == null) {
       return null;
     }
 
     final meters = Geolocator.distanceBetween(
-      riderPosition.latitude,
-      riderPosition.longitude,
+      riderCoords['lat']!,
+      riderCoords['lng']!,
       shopCoords['lat']!,
       shopCoords['lng']!,
     );
     return meters.isFinite ? meters / 1000 : null;
+  }
+
+  Future<Map<String, double>?> _resolveRiderCoordinates(Map<String, dynamic> data) async {
+    final direct = _readCoordinatesFromAny(
+      data,
+      locationKey: 'riderLocation',
+      latKey: 'riderLatitude',
+      lngKey: 'riderLongitude',
+    );
+    if (direct != null) {
+      return direct;
+    }
+
+    final livePosition = await _getFreshCurrentPosition();
+    if (livePosition != null) {
+      return <String, double>{
+        'lat': livePosition.latitude,
+        'lng': livePosition.longitude,
+      };
+    }
+
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUid == null || currentUid.isEmpty) {
+      return null;
+    }
+
+    try {
+      final riderDoc = await FirebaseFirestore.instance.collection('riders').doc(currentUid).get();
+      final riderData = riderDoc.data();
+      if (riderData == null) {
+        return null;
+      }
+
+      return _readCoordinatesFromAny(
+        riderData,
+        locationKey: 'currentLocation',
+        latKey: 'latitude',
+        lngKey: 'longitude',
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<Map<String, double>?> _resolveShopCoordinates(Map<String, dynamic> data) async {
@@ -764,52 +778,51 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
 
   Future<Position?> _getFreshCurrentPosition() async {
     try {
+      final current = await _getCurrentPosition();
+      if (current != null) {
+        return current;
+      }
+    } catch (_) {
+      // Ignore and try last known fallback.
+    }
+
+    try {
       final lastKnown = await Geolocator.getLastKnownPosition();
       if (lastKnown != null) {
-        final age = DateTime.now().difference(lastKnown.timestamp).inSeconds;
+        final capturedAt = lastKnown.timestamp;
+        final age = DateTime.now().difference(capturedAt).inSeconds;
         if (age <= _maxFreshPositionAgeSeconds) {
           return lastKnown;
         }
       }
-      return Geolocator.getCurrentPosition(
-        locationSettings: _buildLocationSettings(
-          accuracy: LocationAccuracy.high,
-        ),
-      );
     } catch (_) {
-      return null;
-    }
-  }
-
-  String? _readCustomerPhone(Map<String, dynamic> data) {
-    final direct = (data['customerPhone'] as String?)?.trim();
-    if (direct != null && direct.isNotEmpty) {
-      return direct;
-    }
-
-    final alternatives = <String>[
-      (data['customerPhoneNumber'] as String?)?.trim() ?? '',
-      (data['phoneNumber'] as String?)?.trim() ?? '',
-      (data['phone'] as String?)?.trim() ?? '',
-      (data['buyerPhone'] as String?)?.trim() ?? '',
-    ];
-    for (final value in alternatives) {
-      if (value.isNotEmpty) return value;
-    }
-
-    final snapshot = data['customerSnapshot'];
-    if (snapshot is Map) {
-      final fromSnapshot = <String>[
-        (snapshot['phoneNumber'] as String?)?.trim() ?? '',
-        (snapshot['phone'] as String?)?.trim() ?? '',
-        (snapshot['contactPhone'] as String?)?.trim() ?? '',
-      ];
-      for (final value in fromSnapshot) {
-        if (value.isNotEmpty) return value;
-      }
+      // Ignore final fallback failure.
     }
 
     return null;
+  }
+
+  Future<Position?> _getCurrentPosition() async {
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      return null;
+    }
+
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      return null;
+    }
+
+    return Geolocator.getCurrentPosition(
+      locationSettings: _buildLocationSettings(
+        accuracy: LocationAccuracy.high,
+      ),
+    ).timeout(const Duration(seconds: 10));
   }
 
   String? _readCustomerUid(Map<String, dynamic> data) {

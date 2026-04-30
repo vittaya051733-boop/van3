@@ -799,7 +799,6 @@ class GlobalOrderAlertService {
             orderId: orderId,
             initialData: data,
           ),
-          fullscreenDialog: true,
         ),
       );
       return true;

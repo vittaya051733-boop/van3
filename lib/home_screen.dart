@@ -58,48 +58,22 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _newJobSubscription;
-  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _unreadChatSubscription;
   final Set<String> _seenPendingOrderIds = <String>{};
   bool _hasPrimedPendingSnapshot = false;
   DateTime? _newJobListenerStartedAt;
-  int _unreadChatCount = 0;
 
   static const List<_DashboardAction> _actions = [
     _DashboardAction(
-      title: 'รับงานใหม่',
+      title: 'ออเดอร์ใหม่',
       subtitle: 'ดูงานที่รอรับ',
       icon: Icons.assignment_turned_in_rounded,
       color: Color(0xFFFF8A00),
     ),
     _DashboardAction(
-      title: 'งานของฉัน',
+      title: 'ประวัติ ออเดอร์',
       subtitle: 'กำลังจัดส่ง',
-      icon: Icons.local_shipping_rounded,
+      icon: Icons.receipt_long_rounded,
       color: Color(0xFFFF6B00),
-    ),
-    _DashboardAction(
-      title: 'แผนที่นำทาง',
-      subtitle: 'เปิดเส้นทางส่ง',
-      icon: Icons.map_rounded,
-      color: Color(0xFFFF9F1C),
-    ),
-    _DashboardAction(
-      title: 'สแกนรับงาน',
-      subtitle: 'QR / Barcode',
-      icon: Icons.qr_code_scanner_rounded,
-      color: Color(0xFFFF7B54),
-    ),
-    _DashboardAction(
-      title: 'แชทลูกค้า',
-      subtitle: 'ข้อความล่าสุด',
-      icon: Icons.chat_bubble_rounded,
-      color: Color(0xFFF36F21),
-    ),
-    _DashboardAction(
-      title: 'โทรลูกค้า',
-      subtitle: 'ติดต่อด่วน',
-      icon: Icons.phone_in_talk_rounded,
-      color: Color(0xFFFF8C42),
     ),
     _DashboardAction(
       title: 'กระเป๋าเงิน',
@@ -127,13 +101,27 @@ class _HomeScreenState extends State<HomeScreen> {
     ),
   ];
 
+  static const Set<String> _bottomBarActionTitles = <String>{
+    'กระเป๋าเงิน',
+    'รายได้วันนี้',
+    'การแจ้งเตือน',
+    'ตั้งค่า',
+  };
+
+  static final List<_DashboardAction> _dashboardActions = _actions
+      .where((action) => !_bottomBarActionTitles.contains(action.title))
+      .toList(growable: false);
+
+  static final List<_DashboardAction> _bottomBarActions = _actions
+      .where((action) => _bottomBarActionTitles.contains(action.title))
+      .toList(growable: false);
+
   @override
   void initState() {
     super.initState();
     _ensureLocationReadyOnEntry();
     _loadOnlineReadyStatus();
     unawaited(_initializeNewJobListener());
-    _listenUnreadChats();
   }
 
   @override
@@ -141,38 +129,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _positionSubscription?.cancel();
     _locationHeartbeatTimer?.cancel();
     _newJobSubscription?.cancel();
-    _unreadChatSubscription?.cancel();
     super.dispose();
-  }
-
-  void _listenUnreadChats() {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      return;
-    }
-
-    _unreadChatSubscription?.cancel();
-    _unreadChatSubscription = FirebaseFirestore.instance
-        .collection('chats')
-        .where('participants', arrayContains: user.uid)
-        .snapshots()
-        .listen((snapshot) {
-      var totalUnread = 0;
-      for (final doc in snapshot.docs) {
-        final unreadMap = doc.data()['unreadCounts'] as Map<String, dynamic>?;
-        final unreadValue = unreadMap?[user.uid];
-        if (unreadValue is int) {
-          totalUnread += unreadValue;
-        } else if (unreadValue is num) {
-          totalUnread += unreadValue.toInt();
-        }
-      }
-
-      if (!mounted) {
-        return;
-      }
-      setState(() => _unreadChatCount = totalUnread);
-    });
   }
 
   Future<void> _initializeNewJobListener() async {
@@ -1371,14 +1328,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _onActionTap(BuildContext context, _DashboardAction action) {
-    if (action.title == 'รับงานใหม่') {
-      Navigator.of(context).push(
-        MaterialPageRoute<void>(builder: (_) => const RiderJobsScreen()),
-      );
-      return;
-    }
-
-    if (action.title == 'แชทลูกค้า') {
+    if (action.title == 'ออเดอร์ใหม่') {
       Navigator.of(context).push(
         MaterialPageRoute<void>(builder: (_) => const RiderJobsScreen()),
       );
@@ -1408,7 +1358,11 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final email = FirebaseAuth.instance.currentUser?.email ?? '-';
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    final dashboardActions = _dashboardActions;
+    final bottomBarActions = _bottomBarActions;
     return Scaffold(
+      bottomNavigationBar: _buildBottomActionBar(context, bottomBarActions),
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -1511,14 +1465,42 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                         const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            _miniStat('งานรอรับ', '0'),
-                            const SizedBox(width: 10),
-                            _miniStat('กำลังส่ง', '0'),
-                            const SizedBox(width: 10),
-                            _miniStat('ส่งสำเร็จ', '0'),
-                          ],
+                        StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                          stream: currentUid == null
+                              ? null
+                              : FirebaseFirestore.instance
+                                  .collection('orders')
+                                  .where('driverId', isEqualTo: currentUid)
+                                  .snapshots(),
+                          builder: (context, snapshot) {
+                            final docs = snapshot.data?.docs ??
+                                const <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+                            var acceptedCount = 0;
+                            var deliveringCount = 0;
+                            var deliveredCount = 0;
+
+                            for (final doc in docs) {
+                              final data = doc.data();
+                              final status = (data['status'] as String?)?.trim() ?? '';
+                              if (status == 'accepted' || status == 'ready') {
+                                acceptedCount += 1;
+                              } else if (status == 'delivering') {
+                                deliveringCount += 1;
+                              } else if (status == 'delivered') {
+                                deliveredCount += 1;
+                              }
+                            }
+
+                            return Row(
+                              children: [
+                                _miniStat('งานที่รับแล้ว', '$acceptedCount'),
+                                const SizedBox(width: 10),
+                                _miniStat('กำลังส่ง', '$deliveringCount'),
+                                const SizedBox(width: 10),
+                                _miniStat('ส่งสำเร็จ', '$deliveredCount'),
+                              ],
+                            );
+                          },
                         ),
                         const SizedBox(height: 14),
                         SizedBox(
@@ -1588,11 +1570,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     childAspectRatio: 1.1,
                   ),
                   delegate: SliverChildBuilderDelegate((context, index) {
-                    final action = _actions[index];
-                    final isChatAction = action.title == 'แชทลูกค้า';
-                    final subtitle = isChatAction && _unreadChatCount > 0
-                        ? '$_unreadChatCount ข้อความใหม่'
-                        : action.subtitle;
+                    final action = dashboardActions[index];
+                    final isHighContrastAction =
+                        action.title == 'ออเดอร์ใหม่' || action.title == 'ประวัติ ออเดอร์';
+                    final hideSubtitle = isHighContrastAction;
+                    final iconColor = isHighContrastAction ? Colors.black : action.color;
                     return InkWell(
                       onTap: () => _onActionTap(context, action),
                       borderRadius: BorderRadius.circular(20),
@@ -1612,6 +1594,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           padding: const EdgeInsets.all(14),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Container(
                                 width: 44,
@@ -1624,18 +1607,12 @@ class _HomeScreenState extends State<HomeScreen> {
                                   clipBehavior: Clip.none,
                                   children: [
                                     Center(
-                                      child: Icon(action.icon, color: action.color, size: 25),
+                                      child: Icon(action.icon, color: iconColor, size: 25),
                                     ),
-                                    if (isChatAction && _unreadChatCount > 0)
-                                      Positioned(
-                                        top: -6,
-                                        right: -8,
-                                        child: _UnreadCountBadge(count: _unreadChatCount),
-                                      ),
                                   ],
                                 ),
                               ),
-                              const Spacer(),
+                              const SizedBox(height: 16),
                               Text(
                                 action.title,
                                 style: const TextStyle(
@@ -1644,24 +1621,88 @@ class _HomeScreenState extends State<HomeScreen> {
                                   color: Color(0xFF2D2D2D),
                                 ),
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                subtitle,
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: Color(0xFF7A7A7A),
+                              if (!hideSubtitle) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  action.subtitle,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Color(0xFF7A7A7A),
+                                  ),
                                 ),
-                              ),
+                              ],
                             ],
                           ),
                         ),
                       ),
                     );
-                  }, childCount: _actions.length),
+                  }, childCount: dashboardActions.length),
                 ),
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBottomActionBar(BuildContext context, List<_DashboardAction> actions) {
+    return SafeArea(
+      top: false,
+      child: Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(
+              color: Color(0x14000000),
+              blurRadius: 18,
+              offset: Offset(0, -4),
+            ),
+          ],
+        ),
+        padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
+        child: Row(
+          children: [
+            for (final action in actions)
+              Expanded(
+                child: InkWell(
+                  onTap: () => _onActionTap(context, action),
+                  borderRadius: BorderRadius.circular(16),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 42,
+                          height: 42,
+                          decoration: BoxDecoration(
+                            color: action.color.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Center(
+                            child: Icon(action.icon, color: action.color, size: 24),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          action.title,
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF2D2D2D),
+                            height: 1.15,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -1710,32 +1751,4 @@ class _DashboardAction {
     required this.icon,
     required this.color,
   });
-}
-
-class _UnreadCountBadge extends StatelessWidget {
-  const _UnreadCountBadge({required this.count});
-
-  final int count;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: const Color(0xFFDC2626),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      constraints: const BoxConstraints(minWidth: 18),
-      child: Text(
-        count > 99 ? '99+' : '$count',
-        textAlign: TextAlign.center,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 10,
-          fontWeight: FontWeight.w700,
-          height: 1.1,
-        ),
-      ),
-    );
-  }
 }
