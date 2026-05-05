@@ -21,6 +21,7 @@ class VanFirebaseMessagingService : FlutterFirebaseMessagingService() {
         when (data["type"]) {
             "call" -> showIncomingCallNotification(data)
             "call_cancel" -> dismissIncomingCall(data)
+            "chat" -> showChatNotificationIfNeeded(data)
             else -> showOrderNotificationIfNeeded(message)
         }
         super.onMessageReceived(message)
@@ -93,6 +94,58 @@ class VanFirebaseMessagingService : FlutterFirebaseMessagingService() {
         IncomingCallOverlayController.dismiss(channelId)
         IncomingCallActivity.dismissIfShowing(channelId)
         sendCancelIntent(channelId)
+    }
+
+    private fun showChatNotificationIfNeeded(data: Map<String, String>) {
+        if (VanRiderApp.isAppInForeground()) {
+            return
+        }
+
+        val chatId = data["chatId"] ?: data["chat_id"] ?: "chat"
+        val senderName = data["senderName"] ?: data["title"] ?: "ข้อความใหม่"
+        val body = data["message"] ?: data["body"] ?: "แตะเพื่ออ่านข้อความ"
+        val openIntent = Intent(this, MainActivity::class.java).apply {
+            action = MainActivity.ACTION_SHOW_CHAT_NOTIFICATION
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra("type", "chat")
+            putExtra("chatId", chatId)
+            putExtra("senderId", data["senderId"] ?: data["sender_id"].orEmpty())
+            putExtra("senderName", senderName)
+            putExtra("message", body)
+            putExtra("orderId", data["orderId"].orEmpty())
+            putExtra(MainActivity.EXTRA_CHAT_ID, chatId)
+            putExtra(MainActivity.EXTRA_SENDER_ID, data["senderId"] ?: data["sender_id"].orEmpty())
+            putExtra(MainActivity.EXTRA_SENDER_NAME, senderName)
+            putExtra(MainActivity.EXTRA_MESSAGE, body)
+            putExtra(MainActivity.EXTRA_ORDER_ID, data["orderId"].orEmpty())
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            chatId.hashCode(),
+            openIntent,
+            pendingIntentFlags(),
+        )
+
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        ensureChatChannel(notificationManager)
+        wakeDevice("incoming_chat", 2000)
+
+        val notification = NotificationCompat.Builder(this, CHAT_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.sym_action_chat)
+            .setContentTitle(senderName)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setAutoCancel(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setContentIntent(pendingIntent)
+            .build()
+
+        notificationManager.notify((data["notificationId"] ?: chatId).hashCode(), notification)
     }
 
     private fun showOrderNotificationIfNeeded(message: RemoteMessage) {
@@ -228,7 +281,29 @@ class VanFirebaseMessagingService : FlutterFirebaseMessagingService() {
         notificationManager.createNotificationChannel(channel)
     }
 
+    private fun ensureChatChannel(notificationManager: NotificationManager) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val channel = NotificationChannel(
+            CHAT_CHANNEL_ID,
+            "Chat Messages",
+            NotificationManager.IMPORTANCE_HIGH,
+        ).apply {
+            description = "Lock-screen notifications for new chat messages"
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            enableVibration(true)
+            setSound(
+                RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),
+                Notification.AUDIO_ATTRIBUTES_DEFAULT,
+            )
+        }
+        notificationManager.createNotificationChannel(channel)
+    }
+
     private fun wakeDeviceForIncomingCall() {
+        wakeDevice("incoming_call", 3000)
+    }
+
+    private fun wakeDevice(reason: String, timeoutMillis: Long) {
         try {
             val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
             @Suppress("DEPRECATION")
@@ -236,11 +311,11 @@ class VanFirebaseMessagingService : FlutterFirebaseMessagingService() {
                 PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
                     PowerManager.ACQUIRE_CAUSES_WAKEUP or
                     PowerManager.ON_AFTER_RELEASE,
-                "$packageName:incoming_call",
+                "$packageName:$reason",
             )
-            wakeLock.acquire(3000)
+            wakeLock.acquire(timeoutMillis)
         } catch (error: Exception) {
-            Log.w(TAG, "Unable to acquire wake lock for incoming call", error)
+            Log.w(TAG, "Unable to acquire wake lock for $reason", error)
         }
     }
 
@@ -271,6 +346,7 @@ class VanFirebaseMessagingService : FlutterFirebaseMessagingService() {
     companion object {
         private const val CALL_CHANNEL_ID = "call_channel"
         private const val ORDER_WAKE_CHANNEL_ID = "incoming_order_wakeup_v2"
+        private const val CHAT_CHANNEL_ID = "chat_wakeup_channel_v1"
         private const val REQUEST_CODE_INCOMING_CALL = 3182
         private const val REQUEST_CODE_ORDER = 3183
         const val NOTIFICATION_ID_INCOMING_CALL = 2387

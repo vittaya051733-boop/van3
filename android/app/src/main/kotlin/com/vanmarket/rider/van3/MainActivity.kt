@@ -140,6 +140,7 @@ class MainActivity : FlutterActivity() {
 		const val ACTION_SHOW_INCOMING_CALL = "com.vanmarket.rider.van3.ACTION_SHOW_INCOMING_CALL"
 		const val ACTION_CANCEL_INCOMING_CALL = "com.vanmarket.rider.van3.ACTION_CANCEL_INCOMING_CALL"
 		const val ACTION_SHOW_INCOMING_ORDER = "com.vanmarket.rider.van3.ACTION_SHOW_INCOMING_ORDER"
+		const val ACTION_SHOW_CHAT_NOTIFICATION = "com.vanmarket.rider.van3.ACTION_SHOW_CHAT_NOTIFICATION"
 		const val EXTRA_CHANNEL_ID = "extra_channel_id"
 		const val EXTRA_APP_ID = "extra_app_id"
 		const val EXTRA_CALL_TOKEN = "extra_call_token"
@@ -151,6 +152,10 @@ class MainActivity : FlutterActivity() {
 		const val EXTRA_ORDER_TITLE = "extra_order_title"
 		const val EXTRA_ORDER_BODY = "extra_order_body"
 		const val EXTRA_APP_WAS_FOREGROUND = "extra_app_was_foreground"
+		const val EXTRA_CHAT_ID = "extra_chat_id"
+		const val EXTRA_SENDER_ID = "extra_sender_id"
+		const val EXTRA_SENDER_NAME = "extra_sender_name"
+		const val EXTRA_MESSAGE = "extra_message"
 
 		private const val APP_CONTROL_CHANNEL = "van.rider/app_state"
 		private const val METHOD_MOVE_TASK_TO_BACK = "move_task_to_back"

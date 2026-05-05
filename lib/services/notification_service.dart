@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
 
@@ -262,6 +263,11 @@ class NotificationService {
 
     if (payload['cancelOnly'] == true) {
       _handleCallCancelFromNative(payload['channelId'] as String?);
+      return;
+    }
+
+    if (payload['type'] == 'chat') {
+      unawaited(_openChatFromNotificationData(payload));
       return;
     }
 
