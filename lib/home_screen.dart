@@ -6,14 +6,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import 'rider_jobs_screen.dart';
-import 'rider_chat_room_screen.dart';
 import 'rider_location_permission_screen.dart';
 import 'services/fcm_token_sync_service.dart';
-import 'utils/contact_phone_resolver.dart';
-import 'utils/order_call_launcher.dart';
+import 'wallet_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -26,19 +23,22 @@ class _HomeScreenState extends State<HomeScreen> {
   static const int _maxFreshPositionAgeSeconds = 45;
   static const String _seenOrderIdsPrefsKey = 'van3_seen_pending_order_ids';
   static const int _maxPersistedSeenOrderIds = 200;
-  static const List<String> _registrationCollections = <String>[
-    'market_registrations',
-    'shop_registrations',
-    'restaurant_registrations',
-    'pharmacy_registrations',
-    'other_registrations',
-  ];
+  static const Set<String> _eligibleVan2OrderSources = <String>{
+    'cod_confirm_dialog',
+    'travel_cod_confirm_dialog',
+    'promptpay_slip_dialog',
+    'travel_promptpay_slip_dialog',
+  };
 
   bool _isSettingOnline = false;
+  bool _isSettingPassengerReady = false;
   bool _isOnlineReady = false;
+  bool _isPassengerReady = false;
   bool _isPromptingLocation = false;
   StreamSubscription<Position>? _positionSubscription;
   Timer? _locationHeartbeatTimer;
+
+  bool get _hasAnyReadyMode => _isOnlineReady || _isPassengerReady;
 
   LocationSettings _buildLocationSettings({
     LocationAccuracy accuracy = LocationAccuracy.high,
@@ -52,11 +52,9 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    return LocationSettings(
-      accuracy: accuracy,
-      distanceFilter: distanceFilter,
-    );
+    return LocationSettings(accuracy: accuracy, distanceFilter: distanceFilter);
   }
+
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _newJobSubscription;
   final Set<String> _seenPendingOrderIds = <String>{};
   bool _hasPrimedPendingSnapshot = false;
@@ -120,7 +118,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _ensureLocationReadyOnEntry();
-    _loadOnlineReadyStatus();
+    _loadReadyStatuses();
     unawaited(_initializeNewJobListener());
   }
 
@@ -140,7 +138,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _restoreSeenPendingOrderIds() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final storedIds = prefs.getStringList(_seenOrderIdsPrefsKey) ?? const <String>[];
+      final storedIds =
+          prefs.getStringList(_seenOrderIdsPrefsKey) ?? const <String>[];
       _seenPendingOrderIds
         ..clear()
         ..addAll(storedIds.where((id) => id.trim().isNotEmpty));
@@ -177,41 +176,45 @@ class _HomeScreenState extends State<HomeScreen> {
         .where('status', isEqualTo: 'pending')
         .snapshots()
         .listen((snapshot) {
-      if (!_hasPrimedPendingSnapshot) {
-        for (final doc in snapshot.docs) {
-          final data = doc.data();
-          if (_shouldShowOrderToRider(data)) {
-            _seenPendingOrderIds.add(doc.id);
+          if (!_hasPrimedPendingSnapshot) {
+            for (final doc in snapshot.docs) {
+              final data = doc.data();
+              if (_shouldShowOrderToRider(data)) {
+                _seenPendingOrderIds.add(doc.id);
+              }
+            }
+            unawaited(_persistSeenPendingOrderIds());
+            _hasPrimedPendingSnapshot = true;
+            return;
           }
-        }
-        unawaited(_persistSeenPendingOrderIds());
-        _hasPrimedPendingSnapshot = true;
-        return;
-      }
 
-      for (final change in snapshot.docChanges) {
-        if (change.type != DocumentChangeType.added) {
-          continue;
-        }
+          for (final change in snapshot.docChanges) {
+            if (change.type != DocumentChangeType.added) {
+              continue;
+            }
 
-        final doc = change.doc;
-        final data = doc.data();
-        if (data == null || !_shouldShowOrderToRider(data)) {
-          continue;
-        }
-        if (!_isFreshNewOrder(data)) {
-          debugPrint('[van3:new-job] ignore stale order id=${doc.id} code=${data['orderCode']}');
-          _seenPendingOrderIds.add(doc.id);
-          unawaited(_persistSeenPendingOrderIds());
-          continue;
-        }
+            final doc = change.doc;
+            final data = doc.data();
+            if (data == null || !_shouldShowOrderToRider(data)) {
+              continue;
+            }
+            if (!_isFreshNewOrder(data)) {
+              debugPrint(
+                '[van3:new-job] ignore stale order id=${doc.id} code=${data['orderCode']}',
+              );
+              _seenPendingOrderIds.add(doc.id);
+              unawaited(_persistSeenPendingOrderIds());
+              continue;
+            }
 
-        if (_seenPendingOrderIds.add(doc.id)) {
-          unawaited(_persistSeenPendingOrderIds());
-          debugPrint('[van3:new-job] notify order id=${doc.id} code=${data['orderCode']}');
-        }
-      }
-    });
+            if (_seenPendingOrderIds.add(doc.id)) {
+              unawaited(_persistSeenPendingOrderIds());
+              debugPrint(
+                '[van3:new-job] notify order id=${doc.id} code=${data['orderCode']}',
+              );
+            }
+          }
+        });
   }
 
   bool _shouldShowOrderToRider(Map<String, dynamic> data) {
@@ -238,7 +241,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final audit = data['audit'];
     if (audit is Map<String, dynamic>) {
       final createdSource = (audit['createdSource'] as String?)?.trim();
-      if (createdSource != 'cod_confirm_dialog') {
+      if (!_eligibleVan2OrderSources.contains(createdSource)) {
         return false;
       }
     } else {
@@ -289,294 +292,6 @@ class _HomeScreenState extends State<HomeScreen> {
     return null;
   }
 
-  Future<void> _showIncomingOrderDialog({
-    required String orderId,
-    required Map<String, dynamic> data,
-  }) async {
-    if (!mounted) return;
-
-    final orderCode = (data['orderCode'] as String?)?.trim();
-    final shopName = (data['shopName'] as String?)?.trim();
-    final total = (data['grandTotal'] as num?) ?? (data['totalPrice'] as num?) ?? 0;
-    final shippingFee = await _resolveShippingFee(data);
-    final customerUid = _readCustomerUid(data);
-    final shopOwnerUid = _readShopOwnerUid(data);
-    final customerPhone = await ContactPhoneResolver.resolveCustomerPhone(
-      orderData: data,
-      customerUid: customerUid,
-    );
-    final riderToShopDistanceKm = await _resolveRiderToShopDistanceKm(data);
-    final destinationCoords = _readDestinationCoordinates(data);
-    final shopPhone = await ContactPhoneResolver.resolveShopPhone(
-      orderData: data,
-      ownerUid: shopOwnerUid,
-      registrationCollections: _registrationCollections,
-    );
-    if (!mounted) return;
-
-    String destination = '-';
-    final delivery = data['deliverySnapshot'];
-    if (delivery is Map<String, dynamic>) {
-      final label = (delivery['locationLabel'] as String?)?.trim();
-      if (label != null && label.isNotEmpty) {
-        destination = label;
-      }
-    }
-
-    if (destination == '-') {
-      final customer = data['customerLocation'];
-      if (customer is Map<String, dynamic>) {
-        final label = (customer['label'] as String?)?.trim();
-        if (label != null && label.isNotEmpty) {
-          destination = label;
-        }
-      }
-    }
-
-    final action = await showDialog<String>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('มีคำสั่งซื้อใหม่'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(orderCode?.isNotEmpty == true ? 'Order: $orderCode' : 'Order: $orderId'),
-              const SizedBox(height: 4),
-              Text('ร้าน: ${shopName?.isNotEmpty == true ? shopName : '-'}'),
-              const SizedBox(height: 4),
-              Text(
-                riderToShopDistanceKm == null
-                    ? 'ระยะทางถึงร้าน: -'
-                    : 'ระยะทางถึงร้าน: ${_formatDistanceFromKm(riderToShopDistanceKm)}',
-              ),
-              const SizedBox(height: 4),
-              Text('ปลายทาง: $destination'),
-              if (destinationCoords != null) ...[
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  onPressed: () async {
-                    await _openDestinationMap(
-                      destinationCoords['lat']!,
-                      destinationCoords['lng']!,
-                    );
-                  },
-                  icon: const Icon(Icons.map_outlined),
-                  label: const Text('เปิดแผนที่ปลายทาง'),
-                ),
-              ],
-              const SizedBox(height: 4),
-              Text('ค่าส่ง: THB ${shippingFee.toStringAsFixed(1)}'),
-              if (customerPhone != null || shopPhone != null) ...[
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: customerUid == null
-                            ? null
-                            : () async {
-                                await OrderCallLauncher.startVoiceCall(
-                                  context: dialogContext,
-                                  peerUid: customerUid,
-                                  peerLabel: OrderCallLauncher.readCustomerLabel(data),
-                                  orderData: data,
-                                  phoneNumber: customerPhone,
-                                  photoUrl: OrderCallLauncher.readCustomerPhotoUrl(data),
-                                );
-                              },
-                        icon: const Icon(Icons.phone_in_talk_outlined),
-                        label: const Text('โทรลูกค้า'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: shopOwnerUid == null
-                            ? null
-                            : () async {
-                                await OrderCallLauncher.startVoiceCall(
-                                  context: dialogContext,
-                                  peerUid: shopOwnerUid,
-                                  peerLabel: OrderCallLauncher.readShopLabel(data),
-                                  orderData: data,
-                                  phoneNumber: shopPhone,
-                                  photoUrl: OrderCallLauncher.readShopPhotoUrl(data),
-                                );
-                              },
-                        icon: const Icon(Icons.support_agent_rounded),
-                        label: const Text('โทรร้านค้า'),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-              if (customerUid != null || shopOwnerUid != null) ...[
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: customerUid == null
-                            ? null
-                            : () async {
-                                await Navigator.of(dialogContext).push(
-                                  MaterialPageRoute<void>(
-                                    builder: (_) => RiderChatRoomScreen(
-                                      peerUid: customerUid,
-                                      peerLabel: 'ลูกค้า',
-                                      orderId: orderId,
-                                    ),
-                                  ),
-                                );
-                              },
-                        icon: const Icon(Icons.chat_bubble_outline_rounded),
-                        label: const Text('แชตลูกค้า'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: shopOwnerUid == null
-                            ? null
-                            : () async {
-                                await Navigator.of(dialogContext).push(
-                                  MaterialPageRoute<void>(
-                                    builder: (_) => RiderChatRoomScreen(
-                                      peerUid: shopOwnerUid,
-                                      peerLabel: 'ร้านค้า',
-                                      orderId: orderId,
-                                    ),
-                                  ),
-                                );
-                              },
-                        icon: const Icon(Icons.storefront_outlined),
-                        label: const Text('แชตร้านค้า'),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-              const SizedBox(height: 4),
-              Text('ยอดรวม: THB ${total.toStringAsFixed(1)}'),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop('reject'),
-              child: const Text('ไม่รับงาน'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop('accept'),
-              child: const Text('รับงาน'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (!mounted || action == null) return;
-
-    if (action == 'accept') {
-      await _acceptIncomingOrder(orderId);
-      return;
-    }
-    await _rejectIncomingOrder(orderId);
-  }
-
-  Future<void> _acceptIncomingOrder(String orderId) async {
-    try {
-      final orderRef = FirebaseFirestore.instance.collection('orders').doc(orderId);
-      final orderSnap = await orderRef.get();
-      final data = orderSnap.data() ?? <String, dynamic>{};
-
-      await orderRef.update({
-        'status': 'accepted',
-        'acceptedAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      await _sendOrderAppNotification(
-        targetApp: 'van1',
-        recipientUid: (data['shopOwnerId'] as String?)?.trim(),
-        orderId: orderId,
-        title: 'ไรเดอร์รับงานแล้ว',
-        body: 'ออเดอร์${(data['orderCode'] as String?)?.trim().isNotEmpty == true ? ' ${(data['orderCode'] as String).trim()}' : ''} มีไรเดอร์รับงานแล้ว',
-        action: 'order_accepted',
-      );
-
-      _showSnack('รับงานเรียบร้อย');
-    } catch (e) {
-      _showSnack('รับงานไม่สำเร็จ: $e');
-    }
-  }
-
-  Future<void> _rejectIncomingOrder(String orderId) async {
-    try {
-      final orderRef = FirebaseFirestore.instance.collection('orders').doc(orderId);
-      final orderSnap = await orderRef.get();
-      final data = orderSnap.data() ?? <String, dynamic>{};
-
-      await orderRef.update({
-        'status': 'awaiting_rider',
-        'statusLabel': 'awaiting_nearest_rider',
-        'driverId': null,
-        'assignedRiderAt': null,
-        'rejectedByDriverAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      await _sendOrderAppNotification(
-        targetApp: 'van2',
-        recipientUid: (data['customerId'] as String?)?.trim(),
-        orderId: orderId,
-        title: 'กำลังหาไรเดอร์ใหม่',
-        body: 'ไรเดอร์ปฏิเสธงาน ระบบกำลังค้นหาไรเดอร์ให้ใหม่',
-        action: 'order_rejected',
-      );
-
-      await _sendOrderAppNotification(
-        targetApp: 'van1',
-        recipientUid: (data['shopOwnerId'] as String?)?.trim(),
-        orderId: orderId,
-        title: 'ไรเดอร์ปฏิเสธงาน',
-        body: 'ออเดอร์${(data['orderCode'] as String?)?.trim().isNotEmpty == true ? ' ${(data['orderCode'] as String).trim()}' : ''} ไรเดอร์ปฏิเสธงาน ระบบกำลังหาไรเดอร์ใหม่',
-        action: 'order_rejected',
-      );
-
-      _showSnack('ไม่รับงานแล้ว ระบบจะหาคนขับคนอื่นต่อ');
-    } catch (e) {
-      _showSnack('อัปเดตสถานะไม่สำเร็จ: $e');
-    }
-  }
-
-  Map<String, double>? _readDestinationCoordinates(Map<String, dynamic> data) {
-    double? lat;
-    double? lng;
-
-    final delivery = data['deliverySnapshot'];
-    if (delivery is Map<String, dynamic>) {
-      lat = _toDouble(delivery['latitude']);
-      lng = _toDouble(delivery['longitude']);
-    }
-
-    if (lat == null || lng == null) {
-      final customer = data['customerLocation'];
-      if (customer is Map<String, dynamic>) {
-        lat = _toDouble(customer['latitude']);
-        lng = _toDouble(customer['longitude']);
-      }
-    }
-
-    if (lat == null || lng == null) {
-      return null;
-    }
-
-    return <String, double>{'lat': lat, 'lng': lng};
-  }
-
   double? _toDouble(Object? value) {
     if (value is num) {
       return value.toDouble();
@@ -587,172 +302,107 @@ class _HomeScreenState extends State<HomeScreen> {
     return null;
   }
 
-  Future<void> _openDestinationMap(double lat, double lng) async {
-    final uri = Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lng');
-    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!ok && mounted) {
-      _showSnack('ไม่สามารถเปิดแผนที่ได้');
+  double _calculateRiderNetShippingIncome(Map<String, dynamic> data) {
+    final persisted = _readPersistedRiderNetIncome(data);
+    if (persisted != null && persisted > 0) {
+      return persisted;
     }
+
+    final shippingFee = _readShippingFeeAmount(data);
+    if (shippingFee <= 0) {
+      return 0;
+    }
+    return double.parse((shippingFee * 0.85).toStringAsFixed(1));
   }
 
-  Future<void> _sendOrderAppNotification({
-    required String targetApp,
-    required String? recipientUid,
-    required String orderId,
-    required String title,
-    required String body,
-    required String action,
-  }) async {
-    if (recipientUid == null || recipientUid.isEmpty) {
-      return;
-    }
-
-    await FirebaseFirestore.instance.collection('app_notifications').add({
-      'targetApp': targetApp,
-      'recipientUid': recipientUid,
-      'orderId': orderId,
-      'title': title,
-      'body': body,
-      'read': false,
-      'createdAt': FieldValue.serverTimestamp(),
-      'source': 'van3_rider',
-      'action': action,
-    });
-  }
-
-  Future<String?> _resolveShopPhone(Map<String, dynamic> data) async {
-    final direct = (data['shopPhone'] as String?)?.trim();
-    if (direct != null && direct.isNotEmpty) {
-      return direct;
-    }
-
-    final ownerUid = (data['shopOwnerId'] as String?)?.trim();
-    if (ownerUid == null || ownerUid.isEmpty) {
-      return null;
-    }
-
-    for (final collection in _registrationCollections) {
-      try {
-        final doc = await FirebaseFirestore.instance.collection(collection).doc(ownerUid).get();
-        if (!doc.exists) continue;
-
-        final map = doc.data();
-        final phone = (map?['phone'] as String?)?.trim() ??
-            (map?['phoneNumber'] as String?)?.trim() ??
-            (map?['contactPhone'] as String?)?.trim();
-        if (phone != null && phone.isNotEmpty) {
-          return phone;
-        }
-      } catch (_) {
-        // Try next collection.
-      }
-    }
-
-    return null;
-  }
-
-  Future<double?> _resolveRiderToShopDistanceKm(Map<String, dynamic> data) async {
-    final riderSearch = data['riderSearch'];
-    if (riderSearch is Map<String, dynamic>) {
-      final matchedDistanceKm = _toDouble(riderSearch['matchedDistanceKm']);
-      if (matchedDistanceKm != null && matchedDistanceKm > 0) {
-        return matchedDistanceKm;
-      }
-    }
-
-    final shopCoords = await _resolveShopCoordinates(data);
-    if (shopCoords == null) {
-      return null;
-    }
-
-    final riderPosition = await _getFreshCurrentPosition(
-      maxAgeSeconds: _maxFreshPositionAgeSeconds,
-    );
-    if (riderPosition == null) {
-      return null;
-    }
-
-    final meters = Geolocator.distanceBetween(
-      riderPosition.latitude,
-      riderPosition.longitude,
-      shopCoords['lat']!,
-      shopCoords['lng']!,
-    );
-
-    return meters.isFinite ? meters / 1000 : null;
-  }
-
-  Future<Map<String, double>?> _resolveShopCoordinates(Map<String, dynamic> data) async {
-    final direct = _readCoordinatesFromAny(data, locationKey: 'shopLocation', latKey: 'shopLatitude', lngKey: 'shopLongitude');
-    if (direct != null) {
-      return direct;
-    }
-
-    final ownerUid = _readShopOwnerUid(data);
-    if (ownerUid == null || ownerUid.isEmpty) {
-      return null;
-    }
-
-    for (final collection in _registrationCollections) {
-      try {
-        final doc = await FirebaseFirestore.instance.collection(collection).doc(ownerUid).get();
-        if (!doc.exists) continue;
-        final map = doc.data();
-        if (map == null) continue;
-
-        final resolved = _readCoordinatesFromAny(
-          map,
-          locationKey: 'shopLocation',
-          latKey: 'shopLatitude',
-          lngKey: 'shopLongitude',
+  double? _readPersistedRiderNetIncome(Map<String, dynamic> data) {
+    return _toDouble(data['deliveryRiderNetIncome']) ??
+        _toDouble(
+          (data['deliveryFinancials']
+              as Map<String, dynamic>?)?['riderNetIncome'],
         );
-        if (resolved != null) {
-          return resolved;
-        }
-      } catch (_) {
-        // Try next collection for resilient coordinate lookup.
+  }
+
+  bool _isDeliveredToday(Map<String, dynamic> data) {
+    final deliveredAt =
+        _toDateTime(data['deliveredAt']) ??
+        _toDateTime(
+          (data['deliveryFinancials'] as Map<String, dynamic>?)?['completedAt'],
+        );
+    if (deliveredAt == null) {
+      return false;
+    }
+
+    final now = DateTime.now();
+    return deliveredAt.year == now.year &&
+        deliveredAt.month == now.month &&
+        deliveredAt.day == now.day;
+  }
+
+  List<_IncomeDaySummary> _buildLast7DayIncomeSummaries(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  ) {
+    final summaries = <String, _IncomeDaySummary>{};
+
+    for (final doc in docs) {
+      final data = doc.data();
+      final status = (data['status'] as String?)?.trim() ?? '';
+      if (status != 'delivered') {
+        continue;
+      }
+
+      final deliveredAt =
+          _toDateTime(data['deliveredAt']) ??
+          _toDateTime(
+            (data['deliveryFinancials']
+                as Map<String, dynamic>?)?['completedAt'],
+          );
+      if (deliveredAt == null) {
+        continue;
+      }
+
+      final dayKey = _dayKey(deliveredAt);
+      final netIncome = _calculateRiderNetShippingIncome(data);
+      final existing = summaries[dayKey];
+      if (existing == null) {
+        summaries[dayKey] = _IncomeDaySummary(
+          dayKey: dayKey,
+          label: _formatDayLabel(deliveredAt),
+          deliveredCount: 1,
+          netIncomeTotal: netIncome,
+        );
+      } else {
+        summaries[dayKey] = _IncomeDaySummary(
+          dayKey: existing.dayKey,
+          label: existing.label,
+          deliveredCount: existing.deliveredCount + 1,
+          netIncomeTotal: existing.netIncomeTotal + netIncome,
+        );
       }
     }
 
-    return null;
+    final ordered = summaries.values.toList(growable: false)
+      ..sort((a, b) => b.dayKey.compareTo(a.dayKey));
+    return ordered.take(7).toList(growable: false);
   }
 
-  Map<String, double>? _readCoordinatesFromAny(
-    Map<String, dynamic> data, {
-    required String locationKey,
-    required String latKey,
-    required String lngKey,
-  }) {
-    final directLat = _toDouble(data[latKey]) ?? _toDouble(data['latitude']) ?? _toDouble(data['lat']);
-    final directLng = _toDouble(data[lngKey]) ??
-        _toDouble(data['longitude']) ??
-        _toDouble(data['lng']) ??
-        _toDouble(data['lon']) ??
-        _toDouble(data['long']);
-    if (directLat != null && directLng != null) {
-      return <String, double>{'lat': directLat, 'lng': directLng};
-    }
-
-    final location = data[locationKey] ?? data['location'] ?? data['geoPoint'] ?? data['coordinates'];
-    if (location is GeoPoint) {
-      return <String, double>{'lat': location.latitude, 'lng': location.longitude};
-    }
-    if (location is Map) {
-      final lat = _toDouble(location['latitude']) ?? _toDouble(location['lat']);
-      final lng = _toDouble(location['longitude']) ??
-          _toDouble(location['lng']) ??
-          _toDouble(location['lon']) ??
-          _toDouble(location['long']);
-      if (lat != null && lng != null) {
-        return <String, double>{'lat': lat, 'lng': lng};
-      }
-    }
-
-    return null;
+  String _dayKey(DateTime dateTime) {
+    final year = dateTime.year.toString();
+    final month = dateTime.month.toString().padLeft(2, '0');
+    final day = dateTime.day.toString().padLeft(2, '0');
+    return '$year-$month-$day';
   }
 
-  Future<double> _resolveShippingFee(Map<String, dynamic> data) async {
-    final direct = _toDouble(data['shippingFee']) ??
+  String _formatDayLabel(DateTime dateTime) {
+    final day = dateTime.day.toString().padLeft(2, '0');
+    final month = dateTime.month.toString().padLeft(2, '0');
+    final year = dateTime.year.toString();
+    return '$day/$month/$year';
+  }
+
+  double _readShippingFeeAmount(Map<String, dynamic> data) {
+    final direct =
+        _toDouble(data['shippingFee']) ??
         _toDouble(data['deliveryFee']) ??
         _toDouble(data['deliveryCharge']) ??
         _toDouble(data['shipping']) ??
@@ -761,153 +411,18 @@ class _HomeScreenState extends State<HomeScreen> {
       return direct;
     }
 
-    final subtotal = _toDouble(data['subtotal']) ?? _toDouble(data['totalPrice']) ?? 0;
+    final subtotal =
+        _toDouble(data['subtotal']) ?? _toDouble(data['totalPrice']) ?? 0;
     final grandTotal = _toDouble(data['grandTotal']) ?? subtotal;
     final delta = grandTotal - subtotal;
     if (delta > 0) {
       return delta;
     }
 
-    final shopCoords = await _resolveShopCoordinates(data);
-    final customerCoords = _readCustomerCoordinates(data);
-    if (shopCoords == null || customerCoords == null) {
-      return 0;
-    }
-
-    final meters = Geolocator.distanceBetween(
-      shopCoords['lat']!,
-      shopCoords['lng']!,
-      customerCoords['lat']!,
-      customerCoords['lng']!,
-    );
-
-    final km = meters <= 0 ? 0.0 : meters / 1000.0;
-    final billableKm = km < 1 ? 1.0 : km;
-    final fee = 25 + ((billableKm - 1) * 12.5);
-    return double.parse(fee.toStringAsFixed(2));
+    return 0;
   }
 
-  Map<String, double>? _readCustomerCoordinates(Map<String, dynamic> data) {
-    final delivery = data['deliverySnapshot'];
-    if (delivery is Map<String, dynamic>) {
-      final lat = _toDouble(delivery['latitude']) ?? _toDouble(delivery['lat']);
-      final lng = _toDouble(delivery['longitude']) ?? _toDouble(delivery['lng']);
-      if (lat != null && lng != null) {
-        return <String, double>{'lat': lat, 'lng': lng};
-      }
-    }
-
-    final customer = data['customerLocation'];
-    if (customer is Map<String, dynamic>) {
-      final lat = _toDouble(customer['latitude']) ?? _toDouble(customer['lat']);
-      final lng = _toDouble(customer['longitude']) ?? _toDouble(customer['lng']);
-      if (lat != null && lng != null) {
-        return <String, double>{'lat': lat, 'lng': lng};
-      }
-    }
-
-    return null;
-  }
-
-  String _formatDistanceFromKm(double km) {
-    if (km < 1) {
-      return '${(km * 1000).round()} เมตร';
-    }
-    return '${km.toStringAsFixed(2)} กม.';
-  }
-
-  String? _readCustomerPhone(Map<String, dynamic> data) {
-    final direct = (data['customerPhone'] as String?)?.trim();
-    if (direct != null && direct.isNotEmpty) {
-      return direct;
-    }
-
-    final alternatives = <String>[
-      (data['customerPhoneNumber'] as String?)?.trim() ?? '',
-      (data['phoneNumber'] as String?)?.trim() ?? '',
-      (data['phone'] as String?)?.trim() ?? '',
-      (data['buyerPhone'] as String?)?.trim() ?? '',
-    ];
-    for (final value in alternatives) {
-      if (value.isNotEmpty) return value;
-    }
-
-    final snapshot = data['customerSnapshot'];
-    if (snapshot is Map) {
-      final fromSnapshot = <String>[
-        (snapshot['phoneNumber'] as String?)?.trim() ?? '',
-        (snapshot['phone'] as String?)?.trim() ?? '',
-        (snapshot['contactPhone'] as String?)?.trim() ?? '',
-      ];
-      for (final value in fromSnapshot) {
-        if (value.isNotEmpty) return value;
-      }
-    }
-
-    return null;
-  }
-
-  String? _readCustomerUid(Map<String, dynamic> data) {
-    final direct = (data['customerId'] as String?)?.trim();
-    if (direct != null && direct.isNotEmpty) {
-      return direct;
-    }
-
-    final alternatives = <String>[
-      (data['customerUid'] as String?)?.trim() ?? '',
-      (data['buyerId'] as String?)?.trim() ?? '',
-      (data['userId'] as String?)?.trim() ?? '',
-    ];
-    for (final value in alternatives) {
-      if (value.isNotEmpty) return value;
-    }
-
-    final snapshot = data['customerSnapshot'];
-    if (snapshot is Map) {
-      final fromSnapshot = <String>[
-        (snapshot['uid'] as String?)?.trim() ?? '',
-        (snapshot['userId'] as String?)?.trim() ?? '',
-        (snapshot['customerId'] as String?)?.trim() ?? '',
-      ];
-      for (final value in fromSnapshot) {
-        if (value.isNotEmpty) return value;
-      }
-    }
-
-    return null;
-  }
-
-  String? _readShopOwnerUid(Map<String, dynamic> data) {
-    final direct = (data['shopOwnerId'] as String?)?.trim();
-    if (direct != null && direct.isNotEmpty) {
-      return direct;
-    }
-
-    final alternatives = <String>[
-      (data['shopId'] as String?)?.trim() ?? '',
-      (data['merchantId'] as String?)?.trim() ?? '',
-      (data['sellerId'] as String?)?.trim() ?? '',
-    ];
-    for (final value in alternatives) {
-      if (value.isNotEmpty) return value;
-    }
-
-    final shopSnapshot = data['shopSnapshot'];
-    if (shopSnapshot is Map) {
-      final fromSnapshot = <String>[
-        (shopSnapshot['ownerId'] as String?)?.trim() ?? '',
-        (shopSnapshot['shopOwnerId'] as String?)?.trim() ?? '',
-        (shopSnapshot['uid'] as String?)?.trim() ?? '',
-      ];
-      for (final value in fromSnapshot) {
-        if (value.isNotEmpty) return value;
-      }
-    }
-
-    return null;
-  }
-
-  Future<void> _loadOnlineReadyStatus() async {
+  Future<void> _loadReadyStatuses() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
@@ -919,9 +434,10 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       setState(() {
         _isOnlineReady = (doc.data()?['onlineReady'] as bool?) ?? false;
+        _isPassengerReady = (doc.data()?['passengerReady'] as bool?) ?? false;
       });
 
-      if (_isOnlineReady) {
+      if (_hasAnyReadyMode) {
         try {
           await _startRealtimeLocationUpdates(user.uid);
         } catch (_) {
@@ -943,7 +459,8 @@ class _HomeScreenState extends State<HomeScreen> {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
       var permission = await Geolocator.checkPermission();
 
-      final hasPermission = permission == LocationPermission.always ||
+      final hasPermission =
+          permission == LocationPermission.always ||
           permission == LocationPermission.whileInUse;
 
       if (serviceEnabled && hasPermission) {
@@ -956,7 +473,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (!mounted) return;
 
-      final permissionStillBlocked = permission == LocationPermission.denied ||
+      final permissionStillBlocked =
+          permission == LocationPermission.denied ||
           permission == LocationPermission.deniedForever;
       final serviceStillOff = !await Geolocator.isLocationServiceEnabled();
 
@@ -987,8 +505,8 @@ class _HomeScreenState extends State<HomeScreen> {
             deniedForever
                 ? 'กรุณาเปิดสิทธิ์ตำแหน่งในตั้งค่าแอป เพื่อให้ระบบอัปเดตพิกัดไรเดอร์ได้'
                 : (needService
-                    ? 'กรุณาเปิด GPS/Location ของเครื่อง เพื่อให้ระบบดึงพิกัดได้'
-                    : 'กรุณาอนุญาตสิทธิ์ตำแหน่ง เพื่อให้ระบบดึงพิกัดได้'),
+                      ? 'กรุณาเปิด GPS/Location ของเครื่อง เพื่อให้ระบบดึงพิกัดได้'
+                      : 'กรุณาอนุญาตสิทธิ์ตำแหน่ง เพื่อให้ระบบดึงพิกัดได้'),
           ),
           actions: [
             TextButton(
@@ -1017,25 +535,59 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _setOnlineReady(bool value) async {
+    await _setReadyMode(
+      value: value,
+      isPassengerMode: false,
+      enabledMessage: 'เปิดรับงานส่งของแล้ว',
+      disabledMessage: _isPassengerReady
+          ? 'ปิดรับงานส่งของแล้ว แต่ยังเปิดรับผู้โดยสารอยู่'
+          : 'ปิดรับงานส่งของแล้ว',
+    );
+  }
+
+  Future<void> _setPassengerReady(bool value) async {
+    await _setReadyMode(
+      value: value,
+      isPassengerMode: true,
+      enabledMessage: 'เปิดรับงานผู้โดยสารแล้ว',
+      disabledMessage: _isOnlineReady
+          ? 'ปิดรับงานผู้โดยสารแล้ว แต่ยังเปิดรับส่งของอยู่'
+          : 'ปิดรับงานผู้โดยสารแล้ว',
+    );
+  }
+
+  Future<void> _setReadyMode({
+    required bool value,
+    required bool isPassengerMode,
+    required String enabledMessage,
+    required String disabledMessage,
+  }) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
       _showSnack('ไม่พบผู้ใช้ กรุณาเข้าสู่ระบบใหม่');
       return;
     }
 
-    setState(() => _isSettingOnline = true);
+    setState(() {
+      if (isPassengerMode) {
+        _isSettingPassengerReady = true;
+      } else {
+        _isSettingOnline = true;
+      }
+    });
     try {
+      final targetOnlineReady = isPassengerMode ? _isOnlineReady : value;
+      final targetPassengerReady = isPassengerMode ? value : _isPassengerReady;
+      final targetHasAnyReadyMode = targetOnlineReady || targetPassengerReady;
       final payload = <String, dynamic>{
         'uid': user.uid,
         'email': user.email,
-        'onlineReady': value,
-        'locationStreaming': value,
+        'onlineReady': targetOnlineReady,
+        'passengerReady': targetPassengerReady,
+        'locationStreaming': targetHasAnyReadyMode,
         'locationCapturedAt': FieldValue.delete(),
         'updatedAt': FieldValue.delete(),
       };
-
-      var hasLocation = false;
-      String? locationWarning;
 
       if (value) {
         final position = await _getFreshCurrentPosition(
@@ -1048,8 +600,11 @@ class _HomeScreenState extends State<HomeScreen> {
         payload.addAll(_positionPayload(position));
         payload['locationUpdatedAt'] = FieldValue.serverTimestamp();
         payload['locationStatus'] = 'streaming';
-        payload['locationSource'] = 'ready_toggle';
-        hasLocation = true;
+        payload['locationSource'] = isPassengerMode
+            ? 'passenger_ready_toggle'
+            : 'ready_toggle';
+      } else if (targetHasAnyReadyMode) {
+        payload['locationStatus'] = 'streaming';
       } else {
         payload['locationStatus'] = 'offline';
       }
@@ -1060,23 +615,24 @@ class _HomeScreenState extends State<HomeScreen> {
           .set(payload, SetOptions(merge: true));
 
       if (!mounted) return;
-      setState(() => _isOnlineReady = value);
+      setState(() {
+        _isOnlineReady = targetOnlineReady;
+        _isPassengerReady = targetPassengerReady;
+      });
       if (value) {
-        if (hasLocation) {
-          _showSnack('ออนไลน์พร้อมรับงานแล้ว และบันทึกพิกัดลงระบบแล้ว');
-        } else {
-          _showSnack(locationWarning ?? 'ออนไลน์พร้อมรับงานแล้ว');
-        }
+        _showSnack('$enabledMessage และบันทึกพิกัดลงระบบแล้ว');
       } else {
-        _showSnack('ปิดรับงานแล้ว');
+        _showSnack(disabledMessage);
       }
 
-      if (value) {
+      if (targetHasAnyReadyMode) {
         try {
           await _startRealtimeLocationUpdates(user.uid);
         } catch (_) {
           if (mounted) {
-            _showSnack('เปิดรับงานแล้ว แต่เริ่มอัปเดตพิกัดเรียลไทม์ไม่สำเร็จ');
+            _showSnack(
+              'เปิดสถานะรับงานแล้ว แต่เริ่มอัปเดตพิกัดเรียลไทม์ไม่สำเร็จ',
+            );
           }
         }
       } else {
@@ -1086,7 +642,13 @@ class _HomeScreenState extends State<HomeScreen> {
       _showSnack('ไม่สามารถตั้งค่าออนไลน์ได้: $e');
     } finally {
       if (mounted) {
-        setState(() => _isSettingOnline = false);
+        setState(() {
+          if (isPassengerMode) {
+            _isSettingPassengerReady = false;
+          } else {
+            _isSettingOnline = false;
+          }
+        });
       }
     }
   }
@@ -1118,27 +680,31 @@ class _HomeScreenState extends State<HomeScreen> {
       _pushCurrentLocationTick(uid, source: 'heartbeat');
     });
 
-    _positionSubscription = Geolocator.getPositionStream(
-      locationSettings: _buildLocationSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 0,
-      ),
-    ).listen((position) async {
-      try {
-        if (!_isFreshPosition(position, maxAgeSeconds: _maxFreshPositionAgeSeconds)) {
-          return;
-        }
+    _positionSubscription =
+        Geolocator.getPositionStream(
+          locationSettings: _buildLocationSettings(
+            accuracy: LocationAccuracy.high,
+            distanceFilter: 0,
+          ),
+        ).listen((position) async {
+          try {
+            if (!_isFreshPosition(
+              position,
+              maxAgeSeconds: _maxFreshPositionAgeSeconds,
+            )) {
+              return;
+            }
 
-        await _writeRiderLocationSnapshot(
-          uid: uid,
-          position: position,
-          source: 'stream',
-          forceOnlineReady: true,
-        );
-      } catch (_) {
-        // Ignore transient stream write errors, next location tick will retry.
-      }
-    });
+            await _writeRiderLocationSnapshot(
+              uid: uid,
+              position: position,
+              source: 'stream',
+              forceOnlineReady: true,
+            );
+          } catch (_) {
+            // Ignore transient stream write errors, next location tick will retry.
+          }
+        });
   }
 
   Future<void> _stopRealtimeLocationUpdates() async {
@@ -1159,7 +725,10 @@ class _HomeScreenState extends State<HomeScreen> {
     };
   }
 
-  Future<void> _pushCurrentLocationTick(String uid, {required String source}) async {
+  Future<void> _pushCurrentLocationTick(
+    String uid, {
+    required String source,
+  }) async {
     try {
       final position = await _getFreshCurrentPosition(
         maxAgeSeconds: _maxFreshPositionAgeSeconds,
@@ -1181,17 +750,22 @@ class _HomeScreenState extends State<HomeScreen> {
     required String uid,
     required Position position,
     required String source,
-    bool forceOnlineReady = false,
+    bool? forceOnlineReady,
+    bool? forcePassengerReady,
   }) async {
     final capturedAt = _positionTimestamp(position);
     final ageSeconds = DateTime.now().toUtc().difference(capturedAt).inSeconds;
+    final onlineReady = forceOnlineReady ?? _isOnlineReady;
+    final passengerReady = forcePassengerReady ?? _isPassengerReady;
+    final hasAnyReadyMode = onlineReady || passengerReady;
 
     await FirebaseFirestore.instance.collection('riders').doc(uid).set({
       'uid': uid,
       ..._positionPayload(position),
-      'onlineReady': forceOnlineReady ? true : _isOnlineReady,
-      'locationStreaming': true,
-      'locationStatus': 'streaming',
+      'onlineReady': onlineReady,
+      'passengerReady': passengerReady,
+      'locationStreaming': hasAnyReadyMode,
+      'locationStatus': hasAnyReadyMode ? 'streaming' : 'offline',
       'locationSource': source,
       'locationCapturedAt': FieldValue.delete(),
       'updatedAt': FieldValue.delete(),
@@ -1217,9 +791,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     return Geolocator.getCurrentPosition(
-      locationSettings: _buildLocationSettings(
-        accuracy: LocationAccuracy.high,
-      ),
+      locationSettings: _buildLocationSettings(accuracy: LocationAccuracy.high),
     ).timeout(const Duration(seconds: 10));
   }
 
@@ -1228,7 +800,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }) async {
     try {
       final current = await _getCurrentPosition();
-      if (current != null && _isFreshPosition(current, maxAgeSeconds: maxAgeSeconds)) {
+      if (current != null &&
+          _isFreshPosition(current, maxAgeSeconds: maxAgeSeconds)) {
         return current;
       }
     } catch (_) {
@@ -1251,7 +824,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
     try {
       final lastKnown = await Geolocator.getLastKnownPosition();
-      if (lastKnown != null && _isFreshPosition(lastKnown, maxAgeSeconds: maxAgeSeconds)) {
+      if (lastKnown != null &&
+          _isFreshPosition(lastKnown, maxAgeSeconds: maxAgeSeconds)) {
         return lastKnown;
       }
       return null;
@@ -1292,7 +866,9 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     if (!mounted || allowed != true) {
-      _showSnack('ยังไม่สามารถเปิดพร้อมรับงานได้ เนื่องจากยังไม่ได้สิทธิ์พิกัด');
+      _showSnack(
+        'ยังไม่สามารถเปิดพร้อมรับงานได้ เนื่องจากยังไม่ได้สิทธิ์พิกัด',
+      );
       return;
     }
 
@@ -1320,6 +896,54 @@ class _HomeScreenState extends State<HomeScreen> {
     await _setOnlineReady(true);
   }
 
+  Future<void> _togglePassengerReady() async {
+    if (_isPassengerReady) {
+      await _setPassengerReady(false);
+      return;
+    }
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      _showSnack('ไม่พบผู้ใช้ กรุณาเข้าสู่ระบบใหม่');
+      return;
+    }
+
+    final allowed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => const RiderLocationPermissionScreen(),
+      ),
+    );
+
+    if (!mounted || allowed != true) {
+      _showSnack(
+        'ยังไม่สามารถเปิดรับผู้โดยสารได้ เนื่องจากยังไม่ได้สิทธิ์พิกัด',
+      );
+      return;
+    }
+
+    final position = await _getFreshCurrentPosition(
+      maxAgeSeconds: _maxFreshPositionAgeSeconds,
+    );
+    if (position == null) {
+      _showSnack('ยังไม่พบพิกัดปัจจุบันของไรเดอร์ กรุณาลองใหม่อีกครั้ง');
+      return;
+    }
+
+    try {
+      await _writeRiderLocationSnapshot(
+        uid: user.uid,
+        position: position,
+        source: 'passenger_permission_gate',
+        forcePassengerReady: true,
+      );
+    } catch (e) {
+      _showSnack('บันทึกพิกัดลงระบบไม่สำเร็จ: $e');
+      return;
+    }
+
+    await _setPassengerReady(true);
+  }
+
   Future<void> _logout(BuildContext context) async {
     await FcmTokenSyncService.instance.clearTokenBeforeLogout();
     await FirebaseAuth.instance.signOut();
@@ -1329,9 +953,30 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _onActionTap(BuildContext context, _DashboardAction action) {
     if (action.title == 'ออเดอร์ใหม่') {
+      Navigator.of(
+        context,
+      ).push(MaterialPageRoute<void>(builder: (_) => const RiderJobsScreen()));
+      return;
+    }
+
+    if (action.title == 'ประวัติ ออเดอร์') {
       Navigator.of(context).push(
-        MaterialPageRoute<void>(builder: (_) => const RiderJobsScreen()),
+        MaterialPageRoute<void>(
+          builder: (_) => const RiderJobsScreen(showHistory: true),
+        ),
       );
+      return;
+    }
+
+    if (action.title == 'รายได้วันนี้') {
+      _showTodayIncomeSummarySheet(context);
+      return;
+    }
+
+    if (action.title == 'กระเป๋าเงิน') {
+      Navigator.of(
+        context,
+      ).push(MaterialPageRoute<void>(builder: (_) => const WalletScreen()));
       return;
     }
 
@@ -1352,6 +997,210 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+    );
+  }
+
+  Future<void> _showTodayIncomeSummarySheet(BuildContext context) async {
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUid == null || currentUid.isEmpty) {
+      _showSnack('ไม่พบบัญชีที่ล็อกอิน');
+      return;
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+            child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: FirebaseFirestore.instance
+                  .collection('orders')
+                  .where('driverId', isEqualTo: currentUid)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                final docs =
+                    snapshot.data?.docs ??
+                    const <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+                var deliveredTodayCount = 0;
+                var netIncomeToday = 0.0;
+                final last7Days = _buildLast7DayIncomeSummaries(docs);
+
+                for (final doc in docs) {
+                  final data = doc.data();
+                  final status = (data['status'] as String?)?.trim() ?? '';
+                  if (status != 'delivered' || !_isDeliveredToday(data)) {
+                    continue;
+                  }
+                  deliveredTodayCount += 1;
+                  netIncomeToday += _calculateRiderNetShippingIncome(data);
+                }
+
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'รายได้วันนี้',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'สรุปจากงานที่ส่งสำเร็จวันนี้และใช้ข้อมูลที่บันทึกตอนปิดงาน',
+                      style: TextStyle(
+                        color: Color(0xFF6B7280),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF7ED),
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'รายได้สุทธิรวมวันนี้',
+                            style: TextStyle(
+                              color: Color(0xFF9A3412),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'THB ${netIncomeToday.toStringAsFixed(1)}',
+                            style: const TextStyle(
+                              color: Color(0xFF7C2D12),
+                              fontSize: 24,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.fact_check_rounded,
+                            color: Color(0xFF0F172A),
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            'ส่งสำเร็จวันนี้ $deliveredTodayCount งาน',
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF0F172A),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'สรุป 7 วันล่าสุด',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF111827),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    if (last7Days.isEmpty)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                        child: const Text(
+                          'ยังไม่มีข้อมูลรายได้ย้อนหลัง 7 วันล่าสุด',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF475569),
+                          ),
+                        ),
+                      )
+                    else
+                      ...last7Days.map(
+                        (summary) => Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF8FAFC),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        summary.label,
+                                        style: const TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w800,
+                                          color: Color(0xFF111827),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        'ส่งสำเร็จ ${summary.deliveredCount} งาน',
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: Color(0xFF6B7280),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Text(
+                                  'THB ${summary.netIncomeTotal.toStringAsFixed(1)}',
+                                  style: const TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w800,
+                                    color: Color(0xFF9A3412),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -1421,7 +1270,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       IconButton(
                         onPressed: () => _logout(context),
-                        icon: const Icon(Icons.logout_rounded, color: Colors.white),
+                        icon: const Icon(
+                          Icons.logout_rounded,
+                          color: Colors.white,
+                        ),
                         tooltip: 'ออกจากระบบ',
                       ),
                     ],
@@ -1436,14 +1288,19 @@ class _HomeScreenState extends State<HomeScreen> {
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(24),
                       color: Colors.white.withValues(alpha: 0.14),
-                      border: Border.all(color: Colors.white.withValues(alpha: 0.22)),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.22),
+                      ),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Row(
                           children: [
-                            Icon(Icons.verified_user_rounded, color: Colors.white),
+                            Icon(
+                              Icons.verified_user_rounded,
+                              color: Colors.white,
+                            ),
                             SizedBox(width: 8),
                             Text(
                               'บัญชีที่ล็อกอิน',
@@ -1469,89 +1326,214 @@ class _HomeScreenState extends State<HomeScreen> {
                           stream: currentUid == null
                               ? null
                               : FirebaseFirestore.instance
-                                  .collection('orders')
-                                  .where('driverId', isEqualTo: currentUid)
-                                  .snapshots(),
+                                    .collection('orders')
+                                    .where('driverId', isEqualTo: currentUid)
+                                    .snapshots(),
                           builder: (context, snapshot) {
-                            final docs = snapshot.data?.docs ??
-                                const <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+                            final docs =
+                                snapshot.data?.docs ??
+                                const <
+                                  QueryDocumentSnapshot<Map<String, dynamic>>
+                                >[];
                             var acceptedCount = 0;
                             var deliveringCount = 0;
                             var deliveredCount = 0;
+                            var riderNetIncome = 0.0;
 
                             for (final doc in docs) {
                               final data = doc.data();
-                              final status = (data['status'] as String?)?.trim() ?? '';
+                              final status =
+                                  (data['status'] as String?)?.trim() ?? '';
                               if (status == 'accepted' || status == 'ready') {
                                 acceptedCount += 1;
                               } else if (status == 'delivering') {
                                 deliveringCount += 1;
                               } else if (status == 'delivered') {
                                 deliveredCount += 1;
+                                if (_isDeliveredToday(data)) {
+                                  riderNetIncome +=
+                                      _calculateRiderNetShippingIncome(data);
+                                }
                               }
                             }
 
-                            return Row(
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                _miniStat('งานที่รับแล้ว', '$acceptedCount'),
-                                const SizedBox(width: 10),
-                                _miniStat('กำลังส่ง', '$deliveringCount'),
-                                const SizedBox(width: 10),
-                                _miniStat('ส่งสำเร็จ', '$deliveredCount'),
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.14),
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(
+                                      color: Colors.white.withValues(
+                                        alpha: 0.20,
+                                      ),
+                                    ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      const Text(
+                                        'รายได้ค่าส่งสุทธิของไรเดอร์วันนี้',
+                                        style: TextStyle(
+                                          color: Color(0xFFFFF0DF),
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'THB ${riderNetIncome.toStringAsFixed(1)}',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      const Text(
+                                        'ใช้ข้อมูลที่บันทึกตอนส่งสำเร็จ หัก 15%',
+                                        style: TextStyle(
+                                          color: Color(0xFFFFF0DF),
+                                          fontSize: 11,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                Row(
+                                  children: [
+                                    _miniStat(
+                                      'งานที่รับแล้ว',
+                                      '$acceptedCount',
+                                    ),
+                                    const SizedBox(width: 10),
+                                    _miniStat('กำลังส่ง', '$deliveringCount'),
+                                    const SizedBox(width: 10),
+                                    _miniStat('ส่งสำเร็จ', '$deliveredCount'),
+                                  ],
+                                ),
                               ],
                             );
                           },
                         ),
                         const SizedBox(height: 14),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            onPressed: _isSettingOnline ? null : _toggleOnlineReady,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: _isOnlineReady
-                                  ? const Color(0xFF2ECC71)
-                                  : Colors.white,
-                              foregroundColor: _isOnlineReady
-                                  ? Colors.white
-                                  : const Color(0xFFE86D00),
-                              elevation: 0,
-                              padding: const EdgeInsets.symmetric(vertical: 13),
-                            ),
-                            icon: _isSettingOnline
-                                ? SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: _isOnlineReady
-                                          ? Colors.white
-                                          : const Color(0xFFE86D00),
-                                    ),
-                                  )
-                                : Icon(
-                                    _isOnlineReady
-                                        ? Icons.check_circle_rounded
-                                        : Icons.power_settings_new_rounded,
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: _isSettingOnline
+                                    ? null
+                                    : _toggleOnlineReady,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: _isOnlineReady
+                                      ? const Color(0xFF2ECC71)
+                                      : Colors.white,
+                                  foregroundColor: _isOnlineReady
+                                      ? Colors.white
+                                      : const Color(0xFFE86D00),
+                                  elevation: 0,
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 13,
                                   ),
-                            label: Text(
-                              _isOnlineReady
-                                  ? 'พร้อมรับงาน'
-                                  : 'ปิดรับงาน',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 15,
+                                ),
+                                icon: _isSettingOnline
+                                    ? SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: _isOnlineReady
+                                              ? Colors.white
+                                              : const Color(0xFFE86D00),
+                                        ),
+                                      )
+                                    : Icon(
+                                        _isOnlineReady
+                                            ? Icons.local_shipping_rounded
+                                            : Icons.inventory_2_outlined,
+                                      ),
+                                label: Text(
+                                  _isOnlineReady ? 'รับส่งของ' : 'ปิดส่งของ',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 15,
+                                  ),
+                                ),
                               ),
                             ),
-                          ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: _isSettingPassengerReady
+                                    ? null
+                                    : _togglePassengerReady,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: _isPassengerReady
+                                      ? const Color(0xFF3B82F6)
+                                      : Colors.white,
+                                  foregroundColor: _isPassengerReady
+                                      ? Colors.white
+                                      : const Color(0xFF1D4ED8),
+                                  elevation: 0,
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 13,
+                                  ),
+                                ),
+                                icon: _isSettingPassengerReady
+                                    ? SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: _isPassengerReady
+                                              ? Colors.white
+                                              : const Color(0xFF1D4ED8),
+                                        ),
+                                      )
+                                    : Icon(
+                                        _isPassengerReady
+                                            ? Icons
+                                                  .directions_car_filled_rounded
+                                            : Icons.person_pin_circle_outlined,
+                                      ),
+                                label: Text(
+                                  _isPassengerReady
+                                      ? 'รับผู้โดยสาร'
+                                      : 'ปิดรับผู้โดยสาร',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 15,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          _isOnlineReady
-                              ? 'พิกัดไรเดอร์กำลังอัปเดตแบบเรียลไทม์'
-                              : 'พิกัดจะเริ่มอัปเดตเมื่อกดพร้อมรับงาน',
+                          _hasAnyReadyMode
+                              ? 'พิกัดไรเดอร์กำลังอัปเดตแบบเรียลไทม์สำหรับงานที่เปิดรับอยู่'
+                              : 'พิกัดจะเริ่มอัปเดตเมื่อกดเปิดรับส่งของหรือรับผู้โดยสาร',
                           style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.w600,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'ส่งของ: ${_isOnlineReady ? 'เปิดรับ' : 'ปิดรับ'} | ผู้โดยสาร: ${_isPassengerReady ? 'เปิดรับ' : 'ปิดรับ'}',
+                          style: const TextStyle(
+                            color: Color(0xFFFFF0DF),
+                            fontWeight: FontWeight.w500,
                             fontSize: 12,
                           ),
                         ),
@@ -1572,9 +1554,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   delegate: SliverChildBuilderDelegate((context, index) {
                     final action = dashboardActions[index];
                     final isHighContrastAction =
-                        action.title == 'ออเดอร์ใหม่' || action.title == 'ประวัติ ออเดอร์';
+                        action.title == 'ออเดอร์ใหม่' ||
+                        action.title == 'ประวัติ ออเดอร์';
                     final hideSubtitle = isHighContrastAction;
-                    final iconColor = isHighContrastAction ? Colors.black : action.color;
+                    final iconColor = isHighContrastAction
+                        ? Colors.black
+                        : action.color;
                     return InkWell(
                       onTap: () => _onActionTap(context, action),
                       borderRadius: BorderRadius.circular(20),
@@ -1607,7 +1592,11 @@ class _HomeScreenState extends State<HomeScreen> {
                                   clipBehavior: Clip.none,
                                   children: [
                                     Center(
-                                      child: Icon(action.icon, color: iconColor, size: 25),
+                                      child: Icon(
+                                        action.icon,
+                                        color: iconColor,
+                                        size: 25,
+                                      ),
                                     ),
                                   ],
                                 ),
@@ -1646,7 +1635,10 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildBottomActionBar(BuildContext context, List<_DashboardAction> actions) {
+  Widget _buildBottomActionBar(
+    BuildContext context,
+    List<_DashboardAction> actions,
+  ) {
     return SafeArea(
       top: false,
       child: Container(
@@ -1669,7 +1661,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   onTap: () => _onActionTap(context, action),
                   borderRadius: BorderRadius.circular(16),
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 6,
+                      horizontal: 4,
+                    ),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -1681,7 +1676,11 @@ class _HomeScreenState extends State<HomeScreen> {
                             borderRadius: BorderRadius.circular(14),
                           ),
                           child: Center(
-                            child: Icon(action.icon, color: action.color, size: 24),
+                            child: Icon(
+                              action.icon,
+                              color: action.color,
+                              size: 24,
+                            ),
                           ),
                         ),
                         const SizedBox(height: 6),
@@ -1751,4 +1750,18 @@ class _DashboardAction {
     required this.icon,
     required this.color,
   });
+}
+
+class _IncomeDaySummary {
+  const _IncomeDaySummary({
+    required this.dayKey,
+    required this.label,
+    required this.deliveredCount,
+    required this.netIncomeTotal,
+  });
+
+  final String dayKey;
+  final String label;
+  final int deliveredCount;
+  final double netIncomeTotal;
 }

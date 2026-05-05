@@ -58,6 +58,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
   Widget build(BuildContext context) {
     final orderCode = (widget.initialData['orderCode'] as String?)?.trim();
     final shopName = (widget.initialData['shopName'] as String?)?.trim();
+    final isTravelOrder = _isTravelPassengerOrder(widget.initialData);
 
     return Scaffold(
       appBar: AppBar(
@@ -72,6 +73,13 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
 
           final viewData = snapshot.data ?? _IncomingOrderViewData.empty(widget.initialData);
           final products = viewData.products;
+          final titleLabel = isTravelOrder
+              ? (viewData.pickupLabel.isNotEmpty ? viewData.pickupLabel : 'ไม่พบจุดรับ')
+              : (shopName?.isNotEmpty == true ? shopName! : 'ไม่พบชื่อร้าน');
+          final distanceLabel = isTravelOrder ? 'ระยะถึงจุดรับ' : 'ระยะถึงร้าน';
+          final destinationTitle = isTravelOrder ? 'จุดส่ง' : 'ปลายทาง';
+          final pickupMapLabel = isTravelOrder ? 'แผนที่จุดรับ' : 'แผนที่ร้านค้า';
+          final detailSectionTitle = isTravelOrder ? 'รายละเอียดการเดินทาง' : 'รายการสินค้า';
 
           return SafeArea(
             child: Column(
@@ -94,7 +102,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: <Widget>[
                                       Text(
-                                        shopName?.isNotEmpty == true ? shopName! : 'ไม่พบชื่อร้าน',
+                                        titleLabel,
                                         style: const TextStyle(
                                           fontSize: 20,
                                           fontWeight: FontWeight.w800,
@@ -120,7 +128,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                 _InfoChip(label: 'ยอดรวม', value: 'THB ${viewData.total.toStringAsFixed(1)}'),
                                 _InfoChip(label: 'ค่าส่ง', value: 'THB ${viewData.shippingFee.toStringAsFixed(1)}'),
                                 _InfoChip(
-                                  label: 'ระยะถึงร้าน',
+                                  label: distanceLabel,
                                   value: viewData.riderToShopDistanceKm == null
                                       ? '-'
                                       : '${viewData.riderToShopDistanceKm!.toStringAsFixed(2)} km',
@@ -129,9 +137,30 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                             ),
                             const SizedBox(height: 16),
                             Text(
-                              'ปลายทาง: ${viewData.destinationLabel}',
+                              '$destinationTitle: ${viewData.destinationLabel}',
                               style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
                             ),
+                            if (isTravelOrder) ...<Widget>[
+                              const SizedBox(height: 8),
+                              Text(
+                                'จุดรับ: ${viewData.pickupLabel}',
+                                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                              ),
+                              if (viewData.vehicleTypeLabel != null) ...<Widget>[
+                                const SizedBox(height: 8),
+                                Text(
+                                  'ประเภทรถ: ${viewData.vehicleTypeLabel}',
+                                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                                ),
+                              ],
+                              if (viewData.scheduleLabel != null) ...<Widget>[
+                                const SizedBox(height: 8),
+                                Text(
+                                  'เวลาเดินทาง: ${viewData.scheduleLabel}',
+                                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                                ),
+                              ],
+                            ],
                             const SizedBox(height: 10),
                             Wrap(
                               spacing: 10,
@@ -157,7 +186,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                       );
                                     },
                                     icon: const Icon(Icons.store_mall_directory_outlined),
-                                    label: const Text('แผนที่ร้านค้า'),
+                                    label: Text(pickupMapLabel),
                                   ),
                               ],
                             ),
@@ -196,7 +225,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                 const SizedBox(width: 10),
                                 Expanded(
                                   child: OutlinedButton.icon(
-                                    onPressed: viewData.shopOwnerUid == null
+                                    onPressed: isTravelOrder || viewData.shopOwnerUid == null
                                         ? null
                                         : () async {
                                             await OrderCallLauncher.startVoiceCall(
@@ -213,7 +242,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                             );
                                           },
                                     icon: const Icon(Icons.support_agent_rounded),
-                                    label: const Text('โทรร้านค้า'),
+                                    label: Text(isTravelOrder ? 'โทรจุดรับ' : 'โทรร้านค้า'),
                                   ),
                                 ),
                               ],
@@ -243,7 +272,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                 const SizedBox(width: 10),
                                 Expanded(
                                   child: OutlinedButton.icon(
-                                    onPressed: viewData.shopOwnerUid == null
+                                    onPressed: isTravelOrder || viewData.shopOwnerUid == null
                                         ? null
                                         : () async {
                                             await Navigator.of(context).push(
@@ -257,7 +286,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                             );
                                           },
                                     icon: const Icon(Icons.storefront_outlined),
-                                    label: const Text('แชตร้านค้า'),
+                                    label: Text(isTravelOrder ? 'แชตจุดรับ' : 'แชตร้านค้า'),
                                   ),
                                 ),
                               ],
@@ -267,7 +296,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                       ),
                       const SizedBox(height: 14),
                       _SectionCard(
-                        title: 'รายการสินค้า',
+                        title: detailSectionTitle,
                         child: Column(
                           children: products.isEmpty
                               ? const <Widget>[
@@ -331,18 +360,21 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
 
   Future<_IncomingOrderViewData> _buildViewData() async {
     final data = widget.initialData;
+    final isTravelOrder = _isTravelPassengerOrder(data);
     final shippingFee = await _resolveShippingFee(data);
     final customerUid = _readCustomerUid(data);
-    final shopOwnerUid = _readShopOwnerUid(data);
+    final shopOwnerUid = isTravelOrder ? null : _readShopOwnerUid(data);
     final customerPhone = await ContactPhoneResolver.resolveCustomerPhone(
       orderData: data,
       customerUid: customerUid,
     );
-    final shopPhone = await ContactPhoneResolver.resolveShopPhone(
-      orderData: data,
-      ownerUid: shopOwnerUid,
-      registrationCollections: _registrationCollections,
-    );
+    final shopPhone = shopOwnerUid == null
+        ? null
+        : await ContactPhoneResolver.resolveShopPhone(
+            orderData: data,
+            ownerUid: shopOwnerUid,
+            registrationCollections: _registrationCollections,
+          );
     final riderToShopDistanceKm = await _resolveRiderToShopDistanceKm(data);
     final shopCoords = await _resolveShopCoordinates(data);
     return _IncomingOrderViewData(
@@ -355,6 +387,9 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
       riderToShopDistanceKm: riderToShopDistanceKm,
       destinationCoords: _readDestinationCoordinates(data),
       destinationLabel: _readDestinationLabel(data),
+        pickupLabel: _readPickupLabel(data),
+        vehicleTypeLabel: _readTravelVehicleLabel(data),
+        scheduleLabel: _readTravelScheduleLabel(data),
       shopCoords: shopCoords,
       shopImageUrl: _readShopImageUrl(data),
       products: _readProducts(data),
@@ -477,6 +512,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
       'read': false,
       'createdAt': FieldValue.serverTimestamp(),
       'source': 'van3_rider',
+      'sourceApp': 'van3',
       'action': action,
     });
   }
@@ -509,6 +545,43 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
     }
 
     return '-';
+  }
+
+  String _readPickupLabel(Map<String, dynamic> data) {
+    final travelRequest = data['travelRequest'];
+    if (travelRequest is Map<String, dynamic>) {
+      final pickup = travelRequest['pickup'];
+      if (pickup is Map<String, dynamic>) {
+        final label = (pickup['title'] as String?)?.trim();
+        if (label != null && label.isNotEmpty) {
+          return label;
+        }
+      }
+    }
+
+    return (data['shopName'] as String?)?.trim() ?? '-';
+  }
+
+  String? _readTravelVehicleLabel(Map<String, dynamic> data) {
+    final travelRequest = data['travelRequest'];
+    if (travelRequest is Map<String, dynamic>) {
+      return (travelRequest['vehicleTypeLabel'] as String?)?.trim();
+    }
+    return null;
+  }
+
+  String? _readTravelScheduleLabel(Map<String, dynamic> data) {
+    final travelRequest = data['travelRequest'];
+    if (travelRequest is Map<String, dynamic>) {
+      return (travelRequest['scheduleLabel'] as String?)?.trim();
+    }
+    return null;
+  }
+
+  bool _isTravelPassengerOrder(Map<String, dynamic> data) {
+    final orderType = (data['orderType'] as String?)?.trim();
+    final serviceType = (data['serviceType'] as String?)?.trim();
+    return orderType == 'travel_passenger' || serviceType == 'travel_passenger';
   }
 
   List<_IncomingOrderProduct> _readProducts(Map<String, dynamic> data) {
@@ -646,6 +719,20 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
   }
 
   Future<Map<String, double>?> _resolveShopCoordinates(Map<String, dynamic> data) async {
+    if (_isTravelPassengerOrder(data)) {
+      final travelRequest = data['travelRequest'];
+      if (travelRequest is Map<String, dynamic>) {
+        final pickup = travelRequest['pickup'];
+        if (pickup is Map<String, dynamic>) {
+          final lat = _toDouble(pickup['latitude']) ?? _toDouble(pickup['lat']);
+          final lng = _toDouble(pickup['longitude']) ?? _toDouble(pickup['lng']);
+          if (lat != null && lng != null) {
+            return <String, double>{'lat': lat, 'lng': lng};
+          }
+        }
+      }
+    }
+
     final direct = _readCoordinatesFromAny(
       data,
       locationKey: 'shopLocation',
@@ -907,6 +994,9 @@ class _IncomingOrderViewData {
     required this.riderToShopDistanceKm,
     required this.destinationCoords,
     required this.destinationLabel,
+    required this.pickupLabel,
+    required this.vehicleTypeLabel,
+    required this.scheduleLabel,
     required this.shopCoords,
     required this.shopImageUrl,
     required this.products,
@@ -924,6 +1014,9 @@ class _IncomingOrderViewData {
       riderToShopDistanceKm: null,
       destinationCoords: null,
       destinationLabel: '-',
+      pickupLabel: '-',
+      vehicleTypeLabel: null,
+      scheduleLabel: null,
       shopCoords: null,
       shopImageUrl: null,
       products: const <_IncomingOrderProduct>[],
@@ -940,6 +1033,9 @@ class _IncomingOrderViewData {
   final double? riderToShopDistanceKm;
   final Map<String, double>? destinationCoords;
   final String destinationLabel;
+  final String pickupLabel;
+  final String? vehicleTypeLabel;
+  final String? scheduleLabel;
   final Map<String, double>? shopCoords;
   final String? shopImageUrl;
   final List<_IncomingOrderProduct> products;

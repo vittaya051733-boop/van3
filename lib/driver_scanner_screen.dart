@@ -248,10 +248,18 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
       return;
     }
 
+    final now = Timestamp.now();
+    final deliverySnapshot = _buildDeliveryFinancialSnapshot(
+      grossShippingFee: _readShippingFeeAmount(data),
+      completedAt: now,
+      completedSource: 'location_qr',
+    );
+
     await orderRef.update({
       'status': 'delivered',
-      'deliveredAt': Timestamp.now(),
-      'updatedAt': Timestamp.now(),
+      'deliveredAt': now,
+      'updatedAt': now,
+      ...deliverySnapshot,
     });
 
     if (!mounted) return;
@@ -368,6 +376,53 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
         _toDouble(data['totalPrice']) ??
         _toDouble(data['subtotal']) ??
         0;
+  }
+
+  double _readShippingFeeAmount(Map<String, dynamic> data) {
+    final direct =
+        _toDouble(data['shippingFee']) ??
+        _toDouble(data['deliveryFee']) ??
+        _toDouble(data['deliveryCharge']) ??
+        _toDouble(data['shipping']) ??
+        0;
+    if (direct > 0) {
+      return direct;
+    }
+
+    final subtotal = _toDouble(data['subtotal']) ?? _toDouble(data['totalPrice']) ?? 0;
+    final grandTotal = _toDouble(data['grandTotal']) ?? subtotal;
+    final delta = grandTotal - subtotal;
+    if (delta > 0) {
+      return double.parse(delta.toStringAsFixed(1));
+    }
+
+    return 0;
+  }
+
+  Map<String, dynamic> _buildDeliveryFinancialSnapshot({
+    required double grossShippingFee,
+    required Timestamp completedAt,
+    required String completedSource,
+  }) {
+    final safeGross = double.parse(grossShippingFee.toStringAsFixed(1));
+    final platformFee = double.parse((safeGross * 0.15).toStringAsFixed(1));
+    final riderNetIncome = double.parse((safeGross - platformFee).toStringAsFixed(1));
+
+    return <String, dynamic>{
+      'deliveryGrossShippingFee': safeGross,
+      'deliveryPlatformFee': platformFee,
+      'deliveryRiderNetIncome': riderNetIncome,
+      'deliveryCompletedSource': completedSource,
+      'deliveryFinancials': <String, dynamic>{
+        'grossShippingFee': safeGross,
+        'platformFee': platformFee,
+        'riderNetIncome': riderNetIncome,
+        'deductionRate': 0.15,
+        'currency': 'THB',
+        'completedAt': completedAt,
+        'completedSource': completedSource,
+      },
+    };
   }
 
   double? _toDouble(Object? value) {

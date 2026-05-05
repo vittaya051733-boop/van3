@@ -9,6 +9,16 @@ import '../services/notification_service.dart';
 class OrderCallLauncher {
   const OrderCallLauncher._();
 
+  static const List<String> _shopProfileCollections = <String>[
+    'users',
+    'customer_users',
+    'market_registrations',
+    'shop_registrations',
+    'restaurant_registrations',
+    'pharmacy_registrations',
+    'other_registrations',
+  ];
+
   static Future<void> startVoiceCall({
     required BuildContext context,
     required String peerUid,
@@ -17,7 +27,9 @@ class OrderCallLauncher {
     String? phoneNumber,
     String? photoUrl,
   }) async {
-    final trimmedPeerUid = peerUid.trim();
+    final trimmedPeerUid = peerUid.trim().isNotEmpty
+        ? peerUid.trim()
+        : _readShopOwnerUid(orderData)?.trim() ?? '';
     if (trimmedPeerUid.isEmpty) {
       _showSnack(context, 'ไม่พบบัญชีปลายทางสำหรับเริ่มการโทร');
       return;
@@ -29,11 +41,12 @@ class OrderCallLauncher {
         throw Exception('ไม่สามารถเริ่มการโทรหาบัญชีตัวเองได้');
       }
 
-      final callee = UserProfile(
+      final callee = await _buildCalleeProfile(
         uid: trimmedPeerUid,
-        displayName: _sanitizeLabel(peerLabel, fallback: 'ผู้ติดต่อ'),
-        phoneNumber: phoneNumber,
-        photoUrl: photoUrl,
+        fallbackLabel: peerLabel,
+        fallbackPhone: phoneNumber,
+        fallbackPhotoUrl: photoUrl,
+        orderData: orderData,
       );
 
       final callData = await NotificationService().initiateCall(
@@ -49,7 +62,9 @@ class OrderCallLauncher {
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
           builder: (_) => CallScreen(
-            channelName: (callData['channelId'] as String?) ?? _fallbackChannelId(caller.uid, callee.uid),
+            channelName:
+                (callData['channelId'] as String?) ??
+                _fallbackChannelId(caller.uid, callee.uid),
             isVideo: false,
             targetProfile: callee,
             appIdOverride: callData['appId'] as String?,
@@ -59,6 +74,9 @@ class OrderCallLauncher {
         ),
       );
     } catch (error) {
+      if (!context.mounted) {
+        return;
+      }
       _showSnack(context, 'เริ่มการโทรไม่สำเร็จ: $error');
     }
   }
@@ -117,6 +135,45 @@ class OrderCallLauncher {
     ]);
   }
 
+  static Future<UserProfile> _buildCalleeProfile({
+    required String uid,
+    required String fallbackLabel,
+    required Map<String, dynamic> orderData,
+    String? fallbackPhone,
+    String? fallbackPhotoUrl,
+  }) async {
+    for (final collection in _shopProfileCollections) {
+      try {
+        final doc = await FirebaseFirestore.instance
+            .collection(collection)
+            .doc(uid)
+            .get();
+        if (!doc.exists) continue;
+        final data = doc.data();
+        if (data == null) continue;
+        return UserProfile.fromMap(uid, <String, dynamic>{
+          ...data,
+          if ((data['phoneNumber'] ?? data['phone']) == null &&
+              fallbackPhone?.trim().isNotEmpty == true)
+            'phoneNumber': fallbackPhone!.trim(),
+          if ((data['photoUrl'] ?? data['imageUrl'] ?? data['shopImageUrl']) ==
+                  null &&
+              fallbackPhotoUrl?.trim().isNotEmpty == true)
+            'photoUrl': fallbackPhotoUrl!.trim(),
+        });
+      } catch (_) {
+        // Try the next profile collection.
+      }
+    }
+
+    return UserProfile(
+      uid: uid,
+      displayName: _sanitizeLabel(fallbackLabel, fallback: 'ผู้ติดต่อ'),
+      phoneNumber: fallbackPhone,
+      photoUrl: fallbackPhotoUrl ?? readShopPhotoUrl(orderData),
+    );
+  }
+
   static Future<UserProfile> _buildCurrentUserProfile() async {
     final currentUser = FirebaseAuth.instance.currentUser;
     if (currentUser == null) {
@@ -152,9 +209,9 @@ class OrderCallLauncher {
     if (!context.mounted) {
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   static String _sanitizeLabel(String? value, {required String fallback}) {
@@ -178,5 +235,17 @@ class OrderCallLauncher {
     }
     final value = source[key];
     return value is String ? value : value?.toString();
+  }
+
+  static String? _readShopOwnerUid(Map<String, dynamic> orderData) {
+    return _firstNonEmpty(<String?>[
+      orderData['shopOwnerId'] as String?,
+      orderData['shopId'] as String?,
+      orderData['merchantId'] as String?,
+      orderData['sellerId'] as String?,
+      _readStringFromMap(orderData['shopSnapshot'], 'ownerId'),
+      _readStringFromMap(orderData['shopSnapshot'], 'shopOwnerId'),
+      _readStringFromMap(orderData['shopSnapshot'], 'uid'),
+    ]);
   }
 }

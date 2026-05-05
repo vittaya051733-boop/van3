@@ -5,7 +5,6 @@ Set-Location $appRoot
 
 
 $expectedProjectId = 'van-merchant'
-$databaseId = 'van3'
 $rulesFile = 'firestore.rules'
 
 if (-not (Get-Command firebase -ErrorAction SilentlyContinue)) {
@@ -30,21 +29,5 @@ if ($projectId -ne $expectedProjectId) {
   exit 1
 }
 
-$tempConfig = '.firebase.firestore.van3.tmp.json'
-$config = @{
-  firestore = @{
-    database = $databaseId
-    rules = $rulesFile
-  }
-}
-$config | ConvertTo-Json -Depth 5 | Set-Content -Path $tempConfig -Encoding UTF8
-
-try {
-  Write-Host "Deploying Firestore rules to database '$databaseId' in project '$expectedProjectId'" -ForegroundColor Cyan
-  firebase deploy --project $expectedProjectId --only firestore --config $tempConfig
-}
-finally {
-  if (Test-Path $tempConfig) {
-    Remove-Item $tempConfig -Force
-  }
-}
+Write-Error 'van3 cannot deploy Firestore rules in isolation right now because all apps still share the default Firestore database. Deploying van3 rules would overwrite shared rules used by van1/van2. Split the apps onto named databases first, or deploy the shared ruleset from the canonical app only.'
+exit 1
