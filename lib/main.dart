@@ -48,13 +48,53 @@ void overlayMain() {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  await _initializeFirebaseSafely();
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-  await NotificationService().initialize();
-  await OverlayAlertService.initialize();
-  await FcmTokenSyncService.instance.initialize();
-  await GlobalOrderAlertService.instance.initialize();
   runApp(const Van3RiderApp());
+
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(_initializeStartupServices());
+  });
+}
+
+Future<void> _initializeFirebaseSafely() async {
+  if (Firebase.apps.isNotEmpty) {
+    return;
+  }
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } on FirebaseException catch (error) {
+    if (error.code != 'duplicate-app') {
+      debugPrint('Firebase initialization failed: $error');
+    }
+  } catch (error) {
+    debugPrint('Firebase initialization failed: $error');
+  }
+}
+
+Future<void> _initializeStartupServices() async {
+  await _initializeFirebaseSafely();
+  if (Firebase.apps.isEmpty) {
+    return;
+  }
+
+  final startupTasks = <Future<void> Function()>[
+    () => NotificationService().initialize(),
+    OverlayAlertService.initialize,
+    () => FcmTokenSyncService.instance.initialize(),
+    () => GlobalOrderAlertService.instance.initialize(),
+  ];
+
+  for (final task in startupTasks) {
+    try {
+      await task();
+    } catch (error, stackTrace) {
+      debugPrint('Startup service initialization failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
+  }
 }
 
 class OverlayAlertService {
@@ -76,7 +116,6 @@ class OverlayAlertService {
 
     await _initializeLocalNotifications();
     await _requestNotificationPermission();
-    await _requestOverlayPermission();
     _listenForegroundMessages();
     await _handleInitialMessage();
 
@@ -116,13 +155,6 @@ class OverlayAlertService {
           fln.AndroidFlutterLocalNotificationsPlugin
         >();
     await androidPlugin?.createNotificationChannel(_urgentChannel);
-  }
-
-  static Future<void> _requestOverlayPermission() async {
-    final isGranted = await overlay.FlutterOverlayWindow.isPermissionGranted();
-    if (!isGranted) {
-      await overlay.FlutterOverlayWindow.requestPermission();
-    }
   }
 
   static void _listenForegroundMessages() {
@@ -547,6 +579,10 @@ class GlobalOrderAlertService {
   };
 
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _orderSubscription;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
+      _riderReadySubscription;
+  bool _isOnlineReady = false;
+  bool _isPassengerReady = false;
   final Set<String> _seenOrderIds = <String>{};
   bool _initialized = false;
   bool _primed = false;
@@ -567,6 +603,9 @@ class GlobalOrderAlertService {
 
     FirebaseAuth.instance.authStateChanges().listen((user) {
       _orderSubscription?.cancel();
+      _riderReadySubscription?.cancel();
+      _isOnlineReady = false;
+      _isPassengerReady = false;
       _seenOrderIds.clear();
       _primed = false;
       _listenerStartedAt = null;
@@ -576,12 +615,31 @@ class GlobalOrderAlertService {
       }
 
       _listenerStartedAt = DateTime.now();
+      _riderReadySubscription = FirebaseFirestore.instance
+          .collection('riders')
+          .doc(user.uid)
+          .snapshots()
+          .listen(
+            (snap) {
+              final data = snap.data();
+              _isOnlineReady = (data?['onlineReady'] as bool?) ?? false;
+              _isPassengerReady = (data?['passengerReady'] as bool?) ?? false;
+            },
+            onError: (Object error, StackTrace stack) {
+              debugPrint('[van3:rider-ready] error: $error');
+            },
+          );
       _orderSubscription = FirebaseFirestore.instance
           .collection('orders')
           .where('driverId', isEqualTo: user.uid)
           .where('status', isEqualTo: 'pending')
           .snapshots()
-          .listen(_handleSnapshot);
+          .listen(
+            _handleSnapshot,
+            onError: (Object error, StackTrace stack) {
+              debugPrint('[van3:order-listener] error: $error');
+            },
+          );
     });
 
     _initialized = true;
@@ -753,6 +811,17 @@ class GlobalOrderAlertService {
     if (sourceApp != 'van2_customer') {
       return false;
     }
+    // Block all incoming orders if the rider has switched off the matching
+    // ready toggle (delivery vs passenger).
+    final orderType = (data['orderType'] as String?)?.trim();
+    final serviceType = (data['serviceType'] as String?)?.trim();
+    final isTravel =
+        orderType == 'travel_passenger' || serviceType == 'travel_passenger';
+    if (isTravel) {
+      if (!_isPassengerReady) return false;
+    } else {
+      if (!_isOnlineReady) return false;
+    }
     if (data['customerConfirmed'] != true || data['riderNotifyReady'] != true) {
       return false;
     }
@@ -856,7 +925,7 @@ class Van3RiderApp extends StatelessWidget {
       future: _initializeFirebase(),
       builder: (context, snapshot) {
         return MaterialApp(
-          title: 'Van3 Rider',
+          title: 'RIDER',
           debugShowCheckedModeBanner: false,
           navigatorKey: navigatorKey,
           theme: ThemeData(

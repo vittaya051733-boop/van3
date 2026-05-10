@@ -10,13 +10,12 @@ class OrderCallLauncher {
   const OrderCallLauncher._();
 
   static const List<String> _shopProfileCollections = <String>[
-    'users',
-    'customer_users',
     'market_registrations',
     'shop_registrations',
     'restaurant_registrations',
     'pharmacy_registrations',
     'other_registrations',
+    'riders',
   ];
 
   static Future<void> startVoiceCall({

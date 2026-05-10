@@ -111,28 +111,12 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
 
     _resolvingPeerPhone = true;
     try {
-      final fromCustomerUsers = await _readPhoneFromDoc(
-        collection: 'customer_users',
-        docId: widget.peerUid,
-      );
-      if (fromCustomerUsers != null) {
-        return fromCustomerUsers;
-      }
-
       final fromRiders = await _readPhoneFromDoc(
         collection: 'riders',
         docId: widget.peerUid,
       );
       if (fromRiders != null) {
         return fromRiders;
-      }
-
-      final fromUsers = await _readPhoneFromDoc(
-        collection: 'users',
-        docId: widget.peerUid,
-      );
-      if (fromUsers != null) {
-        return fromUsers;
       }
 
       for (final collection in _registrationCollections) {

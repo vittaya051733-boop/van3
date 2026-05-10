@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
@@ -6,8 +8,13 @@ import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'rider_chat_room_screen.dart';
+import 'wallet_screen.dart';
+import 'services/rider_location_pusher.dart';
 import 'utils/contact_phone_resolver.dart';
 import 'utils/order_call_launcher.dart';
+import 'utils/order_payment_label.dart';
+
+enum _InsufficientCreditAction { cancel, topUp, reject }
 
 class IncomingOrderScreen extends StatefulWidget {
   const IncomingOrderScreen({
@@ -53,12 +60,209 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
 
   late final Future<_IncomingOrderViewData> _viewDataFuture = _buildViewData();
   bool _isSubmitting = false;
+  bool _isPromptingAccept = false;
+
+  bool _isPayAtDestinationOrder(Map<String, dynamic> orderData) {
+    String? readString(Object? value) {
+      if (value == null) return null;
+      final text = value.toString().trim();
+      return text.isEmpty ? null : text;
+    }
+
+    Map<String, dynamic>? readMap(Object? value) {
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) {
+        return <String, dynamic>{
+          for (final entry in value.entries) entry.key.toString(): entry.value,
+        };
+      }
+      return null;
+    }
+
+    String? normalizeKey(String? value) => value?.trim().toLowerCase();
+
+    if (orderData['payAtDestination'] == true ||
+        orderData['paymentAtDestination'] == true ||
+        orderData['isCod'] == true ||
+        orderData['cashOnDelivery'] == true) {
+      return true;
+    }
+
+    final paymentMap = readMap(orderData['payment']);
+    final candidates = <String?>[
+      readString(orderData['paymentMethod']),
+      readString(orderData['payMethod']),
+      readString(orderData['paymentType']),
+      readString(orderData['paymentChannel']),
+      paymentMap == null ? null : readString(paymentMap['method']),
+      paymentMap == null ? null : readString(paymentMap['paymentMethod']),
+      paymentMap == null ? null : readString(paymentMap['type']),
+      paymentMap == null ? null : readString(paymentMap['channel']),
+    ].whereType<String>().toList(growable: false);
+
+    String? key;
+    for (final value in candidates) {
+      final normalized = normalizeKey(value);
+      if (normalized != null && normalized.isNotEmpty) {
+        key = normalized;
+        break;
+      }
+    }
+
+    if (key == null) {
+      return false;
+    }
+
+    return key.contains('cash_on_delivery') ||
+        key.contains('cod') ||
+        key.contains('pay_at_destination') ||
+        key.contains('destination');
+  }
+
+  double _resolvePayAtDestinationHoldAmount(Map<String, dynamic> orderData) {
+    double? readDouble(Object? value) {
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value);
+      return null;
+    }
+
+    final shippingFee =
+        readDouble(orderData['shippingFee']) ??
+        readDouble(orderData['deliveryFee']) ??
+        readDouble(orderData['deliveryCharge']) ??
+        readDouble(orderData['shipping']) ??
+        0.0;
+
+    final productsSubtotal =
+        readDouble(orderData['subtotal']) ?? readDouble(orderData['totalPrice']);
+
+    final grandTotal = readDouble(orderData['grandTotal']);
+    if (grandTotal != null && grandTotal > 0) {
+      return grandTotal;
+    }
+
+    final total = readDouble(orderData['total']) ?? readDouble(orderData['totalAmount']);
+    if (total != null && total > 0) {
+      if (productsSubtotal != null && productsSubtotal > 0 && shippingFee > 0) {
+        const epsilon = 0.01;
+        final expected = productsSubtotal + shippingFee;
+        if ((total - expected).abs() < epsilon) {
+          return total;
+        }
+        if ((total - productsSubtotal).abs() < epsilon) {
+          return total + shippingFee;
+        }
+      }
+      return total;
+    }
+
+    if (productsSubtotal != null && productsSubtotal > 0) {
+      return productsSubtotal + (shippingFee > 0 ? shippingFee : 0.0);
+    }
+
+    return 0.0;
+  }
+
+  Future<double> _fetchCurrentCreditBalance(String uid) async {
+    final snapshot = await FirebaseFirestore.instance
+        .collection('credits')
+        .where('uid', isEqualTo: uid)
+        .get();
+    var total = 0.0;
+    for (final doc in snapshot.docs) {
+      final amount = doc.data()['amount'];
+      if (amount is num) {
+        total += amount.toDouble();
+      }
+    }
+    return total;
+  }
+
+  Future<bool> _confirmDeductCreditDialog({
+    required double holdAmount,
+    required double currentCredit,
+    required String paymentLabel,
+  }) async {
+    if (!mounted) return false;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('ยืนยันหักเครดิต'),
+          content: Text(
+            'ออเดอร์นี้เป็น "$paymentLabel"\n'
+            'ระบบจะหักเครดิตของคุณ $holdAmount บาท เมื่อกดรับงาน\n\n'
+            'เครดิตปัจจุบัน: ${currentCredit.toStringAsFixed(2)} บาท',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('ยกเลิก'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('ยืนยันรับงาน'),
+            ),
+          ],
+        );
+      },
+    );
+
+    return confirmed == true;
+  }
+
+  Future<_InsufficientCreditAction> _showInsufficientCreditDialog({
+    required double holdAmount,
+    required double currentCredit,
+    required String paymentLabel,
+  }) async {
+    if (!mounted) return _InsufficientCreditAction.cancel;
+
+    final action = await showDialog<_InsufficientCreditAction>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('เครดิตไม่พอ'),
+          content: Text(
+            'ออเดอร์นี้เป็น "$paymentLabel"\n'
+            'ต้องใช้เครดิตอย่างน้อย $holdAmount บาทเพื่อรับงาน\n\n'
+            'เครดิตปัจจุบัน: ${currentCredit.toStringAsFixed(2)} บาท\n\n'
+            'กรุณาเติมเครดิตกับไลด์เดอร์ก่อน หรือปฏิเสธงานนี้',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(
+                _InsufficientCreditAction.cancel,
+              ),
+              child: const Text('ปิด'),
+            ),
+            OutlinedButton(
+              onPressed: () => Navigator.of(dialogContext).pop(
+                _InsufficientCreditAction.reject,
+              ),
+              child: const Text('ปฏิเสธงาน'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(
+                _InsufficientCreditAction.topUp,
+              ),
+              child: const Text('เติมเครดิต'),
+            ),
+          ],
+        );
+      },
+    );
+
+    return action ?? _InsufficientCreditAction.cancel;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final orderCode = (widget.initialData['orderCode'] as String?)?.trim();
-    final shopName = (widget.initialData['shopName'] as String?)?.trim();
+    final orderCode = _readTrimmedString(widget.initialData['orderCode']);
+    final shopName = _readTrimmedString(widget.initialData['shopName']);
     final isTravelOrder = _isTravelPassengerOrder(widget.initialData);
+    final paymentLabel = resolveOrderPaymentLabel(widget.initialData);
 
     return Scaffold(
       appBar: AppBar(
@@ -114,6 +318,14 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                             ? 'Order ID: ${widget.orderId}\nเลขออเดอร์: $orderCode'
                                             : 'Order ID: ${widget.orderId}',
                                         style: const TextStyle(color: Color(0xFF6B7280)),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        'วิธีจ่าย: ${paymentLabel ?? '-'}',
+                                        style: const TextStyle(
+                                          color: Color(0xFF6B7280),
+                                          fontWeight: FontWeight.w600,
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -400,25 +612,117 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
   }
 
   Future<void> _acceptOrder() async {
-    if (_isSubmitting) return;
-    setState(() => _isSubmitting = true);
+    if (_isSubmitting || _isPromptingAccept) return;
+    setState(() => _isPromptingAccept = true);
     try {
+      final currentUid = FirebaseAuth.instance.currentUser?.uid;
+      if (currentUid == null || currentUid.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('กรุณาเข้าสู่ระบบใหม่')),
+        );
+        return;
+      }
+
       final orderRef = FirebaseFirestore.instance.collection('orders').doc(widget.orderId);
       final orderSnap = await orderRef.get();
       final data = orderSnap.data() ?? <String, dynamic>{};
 
-      await orderRef.update({
-        'status': 'accepted',
-        'acceptedAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
+      final isPayAtDestination = _isPayAtDestinationOrder(data);
+      final paymentLabel =
+          resolveOrderPaymentLabel(data) ??
+          (isPayAtDestination ? 'จ่ายปลายทาง' : '');
+
+      if (isPayAtDestination) {
+        final holdAmount = _resolvePayAtDestinationHoldAmount(data);
+        if (holdAmount > 0) {
+          final currentCredit = await _fetchCurrentCreditBalance(currentUid);
+          if (currentCredit < holdAmount) {
+            final action = await _showInsufficientCreditDialog(
+              holdAmount: holdAmount,
+              currentCredit: currentCredit,
+              paymentLabel: paymentLabel.isEmpty ? 'จ่ายปลายทาง' : paymentLabel,
+            );
+
+            if (action == _InsufficientCreditAction.topUp) {
+              if (!mounted) return;
+              await Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => const WalletScreen()),
+              );
+              return;
+            }
+
+            if (action == _InsufficientCreditAction.reject) {
+              await _rejectOrder();
+              return;
+            }
+
+            return;
+          }
+
+          final confirmed = await _confirmDeductCreditDialog(
+            holdAmount: holdAmount,
+            currentCredit: currentCredit,
+            paymentLabel: paymentLabel.isEmpty ? 'จ่ายปลายทาง' : paymentLabel,
+          );
+          if (!confirmed) {
+            return;
+          }
+        }
+      }
+
+      if (!mounted) return;
+      setState(() => _isSubmitting = true);
+
+      await FirebaseFirestore.instance.runTransaction((transaction) async {
+        final freshSnap = await transaction.get(orderRef);
+        final freshData = freshSnap.data() ?? <String, dynamic>{};
+        final status = (freshData['status'] as String?)?.trim() ?? '';
+        if (status.isNotEmpty && status != 'pending' && status != 'awaiting_rider') {
+          throw StateError('ออเดอร์นี้ไม่อยู่ในสถานะรอรับงานแล้ว (สถานะ: $status)');
+        }
+
+        final driverId = (freshData['driverId'] as String?)?.trim();
+        if (driverId != null && driverId.isNotEmpty && driverId != currentUid) {
+          throw StateError('ออเดอร์นี้ถูกจองโดยไรเดอร์คนอื่นแล้ว');
+        }
+
+        final needsHold = _isPayAtDestinationOrder(freshData);
+        final holdAmount = needsHold ? _resolvePayAtDestinationHoldAmount(freshData) : 0.0;
+
+        if (needsHold && holdAmount > 0) {
+          final creditDocId = 'order_pay_at_destination_${widget.orderId}_$currentUid';
+          final creditRef = FirebaseFirestore.instance.collection('credits').doc(creditDocId);
+          transaction.set(creditRef, {
+            'uid': currentUid,
+            'amount': -holdAmount,
+            'timestamp': FieldValue.serverTimestamp(),
+            'type': 'order_pay_at_destination_hold',
+            'orderId': widget.orderId,
+            'source': 'rider_accept_order',
+          });
+        }
+
+        transaction.update(orderRef, {
+          'status': 'accepted',
+          'driverId': currentUid,
+          'acceptedAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
       });
+
+      // Push พิกัดตอนรับงาน (action)
+      unawaited(RiderLocationPusher.pushOnce(
+        uid: currentUid,
+        source: 'order_accepted',
+      ));
 
       await _sendOrderAppNotification(
         targetApp: 'van1',
-        recipientUid: (data['shopOwnerId'] as String?)?.trim(),
+        recipientUid: _readTrimmedString(data['shopOwnerId']),
         orderId: widget.orderId,
         title: 'ไรเดอร์รับงานแล้ว',
-        body: 'ออเดอร์${(data['orderCode'] as String?)?.trim().isNotEmpty == true ? ' ${(data['orderCode'] as String).trim()}' : ''} มีไรเดอร์รับงานแล้ว',
+        body: 'ออเดอร์${_orderCodeSuffix(data)} มีไรเดอร์รับงานแล้ว',
         action: 'order_accepted',
       );
 
@@ -434,7 +738,10 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
       );
     } finally {
       if (mounted) {
-        setState(() => _isSubmitting = false);
+        setState(() {
+          _isSubmitting = false;
+          _isPromptingAccept = false;
+        });
       }
     }
   }
@@ -458,7 +765,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
 
       await _sendOrderAppNotification(
         targetApp: 'van2',
-        recipientUid: (data['customerId'] as String?)?.trim(),
+        recipientUid: _readTrimmedString(data['customerId']),
         orderId: widget.orderId,
         title: 'กำลังหาไรเดอร์ใหม่',
         body: 'ไรเดอร์ปฏิเสธงาน ระบบกำลังค้นหาไรเดอร์ให้ใหม่',
@@ -467,10 +774,10 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
 
       await _sendOrderAppNotification(
         targetApp: 'van1',
-        recipientUid: (data['shopOwnerId'] as String?)?.trim(),
+        recipientUid: _readTrimmedString(data['shopOwnerId']),
         orderId: widget.orderId,
         title: 'ไรเดอร์ปฏิเสธงาน',
-        body: 'ออเดอร์${(data['orderCode'] as String?)?.trim().isNotEmpty == true ? ' ${(data['orderCode'] as String).trim()}' : ''} ไรเดอร์ปฏิเสธงาน ระบบกำลังหาไรเดอร์ใหม่',
+        body: 'ออเดอร์${_orderCodeSuffix(data)} ไรเดอร์ปฏิเสธงาน ระบบกำลังหาไรเดอร์ใหม่',
         action: 'order_rejected',
       );
 
@@ -518,8 +825,21 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
   }
 
   Future<void> _openMap(double lat, double lng) async {
-    final uri = Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lng');
-    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    // เปิด Google Maps แบบ navigation มอเตอร์ไซค์ (two-wheeler) ทันที
+    final navUri = Uri.parse('google.navigation:q=$lat,$lng&mode=l');
+    if (await launchUrl(navUri, mode: LaunchMode.externalApplication)) {
+      return;
+    }
+    // Fallback 1: Directions URL พร้อม travelmode=two-wheeler
+    final dirUri = Uri.parse(
+      'https://www.google.com/maps/dir/?api=1&destination=$lat,$lng&travelmode=two-wheeler&dir_action=navigate',
+    );
+    if (await launchUrl(dirUri, mode: LaunchMode.externalApplication)) {
+      return;
+    }
+    // Fallback 2: search
+    final searchUri = Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lng');
+    final ok = await launchUrl(searchUri, mode: LaunchMode.externalApplication);
     if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('ไม่สามารถเปิดแผนที่ได้')),
@@ -530,7 +850,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
   String _readDestinationLabel(Map<String, dynamic> data) {
     final delivery = data['deliverySnapshot'];
     if (delivery is Map<String, dynamic>) {
-      final label = (delivery['locationLabel'] as String?)?.trim();
+      final label = _readTrimmedString(delivery['locationLabel']);
       if (label != null && label.isNotEmpty) {
         return label;
       }
@@ -538,7 +858,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
 
     final customer = data['customerLocation'];
     if (customer is Map<String, dynamic>) {
-      final label = (customer['label'] as String?)?.trim();
+      final label = _readTrimmedString(customer['label']);
       if (label != null && label.isNotEmpty) {
         return label;
       }
@@ -552,20 +872,20 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
     if (travelRequest is Map<String, dynamic>) {
       final pickup = travelRequest['pickup'];
       if (pickup is Map<String, dynamic>) {
-        final label = (pickup['title'] as String?)?.trim();
+        final label = _readTrimmedString(pickup['title']);
         if (label != null && label.isNotEmpty) {
           return label;
         }
       }
     }
 
-    return (data['shopName'] as String?)?.trim() ?? '-';
+    return _readTrimmedString(data['shopName']) ?? '-';
   }
 
   String? _readTravelVehicleLabel(Map<String, dynamic> data) {
     final travelRequest = data['travelRequest'];
     if (travelRequest is Map<String, dynamic>) {
-      return (travelRequest['vehicleTypeLabel'] as String?)?.trim();
+      return _readTrimmedString(travelRequest['vehicleTypeLabel']);
     }
     return null;
   }
@@ -573,14 +893,14 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
   String? _readTravelScheduleLabel(Map<String, dynamic> data) {
     final travelRequest = data['travelRequest'];
     if (travelRequest is Map<String, dynamic>) {
-      return (travelRequest['scheduleLabel'] as String?)?.trim();
+      return _readTrimmedString(travelRequest['scheduleLabel']);
     }
     return null;
   }
 
   bool _isTravelPassengerOrder(Map<String, dynamic> data) {
-    final orderType = (data['orderType'] as String?)?.trim();
-    final serviceType = (data['serviceType'] as String?)?.trim();
+    final orderType = _readTrimmedString(data['orderType']);
+    final serviceType = _readTrimmedString(data['serviceType']);
     return orderType == 'travel_passenger' || serviceType == 'travel_passenger';
   }
 
@@ -606,7 +926,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
   }
 
   String? _readShopImageUrl(Map<String, dynamic> data) {
-    final direct = (data['shopImageUrl'] as String?)?.trim();
+    final direct = _readTrimmedString(data['shopImageUrl']);
     if (direct != null && direct.isNotEmpty) {
       return direct;
     }
@@ -913,15 +1233,15 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
   }
 
   String? _readCustomerUid(Map<String, dynamic> data) {
-    final direct = (data['customerId'] as String?)?.trim();
+    final direct = _readTrimmedString(data['customerId']);
     if (direct != null && direct.isNotEmpty) {
       return direct;
     }
 
     final alternatives = <String>[
-      (data['customerUid'] as String?)?.trim() ?? '',
-      (data['buyerId'] as String?)?.trim() ?? '',
-      (data['userId'] as String?)?.trim() ?? '',
+      _readTrimmedString(data['customerUid']) ?? '',
+      _readTrimmedString(data['buyerId']) ?? '',
+      _readTrimmedString(data['userId']) ?? '',
     ];
     for (final value in alternatives) {
       if (value.isNotEmpty) return value;
@@ -930,9 +1250,9 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
     final snapshot = data['customerSnapshot'];
     if (snapshot is Map) {
       final fromSnapshot = <String>[
-        (snapshot['uid'] as String?)?.trim() ?? '',
-        (snapshot['userId'] as String?)?.trim() ?? '',
-        (snapshot['customerId'] as String?)?.trim() ?? '',
+        _readTrimmedString(snapshot['uid']) ?? '',
+        _readTrimmedString(snapshot['userId']) ?? '',
+        _readTrimmedString(snapshot['customerId']) ?? '',
       ];
       for (final value in fromSnapshot) {
         if (value.isNotEmpty) return value;
@@ -943,15 +1263,15 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
   }
 
   String? _readShopOwnerUid(Map<String, dynamic> data) {
-    final direct = (data['shopOwnerId'] as String?)?.trim();
+    final direct = _readTrimmedString(data['shopOwnerId']);
     if (direct != null && direct.isNotEmpty) {
       return direct;
     }
 
     final alternatives = <String>[
-      (data['shopId'] as String?)?.trim() ?? '',
-      (data['merchantId'] as String?)?.trim() ?? '',
-      (data['sellerId'] as String?)?.trim() ?? '',
+      _readTrimmedString(data['shopId']) ?? '',
+      _readTrimmedString(data['merchantId']) ?? '',
+      _readTrimmedString(data['sellerId']) ?? '',
     ];
     for (final value in alternatives) {
       if (value.isNotEmpty) return value;
@@ -960,9 +1280,9 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
     final shopSnapshot = data['shopSnapshot'];
     if (shopSnapshot is Map) {
       final fromSnapshot = <String>[
-        (shopSnapshot['ownerId'] as String?)?.trim() ?? '',
-        (shopSnapshot['shopOwnerId'] as String?)?.trim() ?? '',
-        (shopSnapshot['uid'] as String?)?.trim() ?? '',
+        _readTrimmedString(shopSnapshot['ownerId']) ?? '',
+        _readTrimmedString(shopSnapshot['shopOwnerId']) ?? '',
+        _readTrimmedString(shopSnapshot['uid']) ?? '',
       ];
       for (final value in fromSnapshot) {
         if (value.isNotEmpty) return value;
@@ -980,6 +1300,22 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
       return double.tryParse(value.trim());
     }
     return null;
+  }
+
+  String? _readTrimmedString(Object? value) {
+    final text = value?.toString().trim();
+    if (text == null || text.isEmpty) {
+      return null;
+    }
+    return text;
+  }
+
+  String _orderCodeSuffix(Map<String, dynamic> data) {
+    final code = _readTrimmedString(data['orderCode']);
+    if (code == null) {
+      return '';
+    }
+    return ' $code';
   }
 }
 

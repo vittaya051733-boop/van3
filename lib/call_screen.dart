@@ -37,6 +37,11 @@ class CallScreen extends StatefulWidget {
 class _CallScreenState extends State<CallScreen> {
   static const String _defaultAgoraAppId = '37050f5308fd450ba070b53c01596c06';
 
+  // Connection-stuck guards: end the call automatically if Agora cannot
+  // establish a remote connection within these windows.
+  static const Duration _joinChannelTimeout = Duration(seconds: 15);
+  static const Duration _remoteConnectTimeout = Duration(seconds: 30);
+
   RtcEngine? _engine;
   bool _joined = false;
   int? _remoteUid;
@@ -48,9 +53,12 @@ class _CallScreenState extends State<CallScreen> {
   bool _remoteConnected = false;
   DateTime? _callStart;
   Timer? _durationTimer;
+  Timer? _joinChannelTimer;
+  Timer? _remoteConnectTimer;
   bool _resultSent = false;
   bool _cancelSignalSent = false;
   String? _fatalError;
+  String? _connectStatusOverride;
 
   late final String _activeToken;
   late final String _activeChannelId;
@@ -102,6 +110,8 @@ class _CallScreenState extends State<CallScreen> {
   void dispose() {
     _stopRingback();
     _stopDurationTicker();
+    _joinChannelTimer?.cancel();
+    _remoteConnectTimer?.cancel();
     _sessionSubscription?.cancel();
     _sessionSubscription = null;
     _engine?.leaveChannel();
@@ -164,15 +174,24 @@ class _CallScreenState extends State<CallScreen> {
       engine.registerEventHandler(
         RtcEngineEventHandler(
           onJoinChannelSuccess: (connection, elapsed) {
+            debugPrint('[call] joined channel=${connection.channelId} uid=${connection.localUid} elapsed=${elapsed}ms');
+            _joinChannelTimer?.cancel();
             if (!mounted) return;
-            setState(() => _joined = true);
+            setState(() {
+              _joined = true;
+              _connectStatusOverride = null;
+            });
+            _armRemoteConnectTimer();
           },
           onUserJoined: (connection, remoteUid, elapsed) {
             if (connection.channelId != _activeChannelId || !mounted) return;
+            debugPrint('[call] remote user joined uid=$remoteUid elapsed=${elapsed}ms');
+            _remoteConnectTimer?.cancel();
             setState(() {
               _remoteUid = remoteUid;
               _remoteConnected = true;
               _callStart = DateTime.now();
+              _connectStatusOverride = null;
             });
             unawaited(_updateCallSessionStatus('connected', extra: {
               'connectedAt': FieldValue.serverTimestamp(),
@@ -190,10 +209,27 @@ class _CallScreenState extends State<CallScreen> {
             _stopDurationTicker();
             unawaited(_endCall(remoteEnded: true));
           },
-          onError: (err, msg) {
-            if (err == ErrorCodeType.errInvalidToken && mounted) {
+          onConnectionStateChanged: (connection, state, reason) {
+            debugPrint('[call] connectionState=$state reason=$reason');
+            if (!mounted) return;
+            if (state == ConnectionStateType.connectionStateReconnecting) {
+              setState(() => _connectStatusOverride = 'กำลังเชื่อมต่อใหม่...');
+            } else if (state == ConnectionStateType.connectionStateFailed) {
               setState(() {
-                _fatalError = 'Agora token ไม่ถูกต้องหรือไม่ตรงกับ App ID';
+                _fatalError = 'การเชื่อมต่อล้มเหลว กรุณาลองใหม่อีกครั้ง';
+              });
+              unawaited(_endCall());
+            } else if (state == ConnectionStateType.connectionStateConnected) {
+              setState(() => _connectStatusOverride = null);
+            }
+          },
+          onError: (err, msg) {
+            debugPrint('[call] agora error code=$err msg=$msg');
+            if (!mounted) return;
+            if (err == ErrorCodeType.errInvalidToken ||
+                err == ErrorCodeType.errTokenExpired) {
+              setState(() {
+                _fatalError = 'Agora token ไม่ถูกต้องหรือหมดอายุ';
               });
               unawaited(_endCall(declined: true));
             }
@@ -220,6 +256,8 @@ class _CallScreenState extends State<CallScreen> {
           publishMicrophoneTrack: true,
         ),
       );
+
+      _armJoinChannelTimer();
 
       if (!mounted) {
         await engine.leaveChannel();
@@ -428,11 +466,39 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   String _statusText({required bool isVideo}) {
+    final override = _connectStatusOverride;
+    if (override != null && override.isNotEmpty) return override;
     if (!_joined) return 'กำลังเชื่อมต่อ...';
     if (!_remoteConnected) {
       return isVideo ? 'กำลังโทรหา (วิดีโอ)' : 'กำลังโทรหา';
     }
     return 'กำลังสนทนากับ';
+  }
+
+  void _armJoinChannelTimer() {
+    _joinChannelTimer?.cancel();
+    _joinChannelTimer = Timer(_joinChannelTimeout, () {
+      if (!mounted || _joined) return;
+      debugPrint('[call] joinChannel timeout after ${_joinChannelTimeout.inSeconds}s');
+      setState(() {
+        _fatalError = 'เชื่อมต่อบริการโทรไม่สำเร็จ กรุณาลองใหม่อีกครั้ง';
+      });
+      unawaited(_endCall());
+    });
+  }
+
+  void _armRemoteConnectTimer() {
+    _remoteConnectTimer?.cancel();
+    _remoteConnectTimer = Timer(_remoteConnectTimeout, () {
+      if (!mounted || _remoteConnected) return;
+      debugPrint('[call] remote connect timeout after ${_remoteConnectTimeout.inSeconds}s');
+      setState(() {
+        _fatalError = widget.isIncoming
+            ? 'ไม่สามารถเชื่อมต่อกับผู้โทรได้'
+            : 'ปลายทางไม่ตอบรับการโทร';
+      });
+      unawaited(_endCall());
+    });
   }
 
   void _toggleSpeaker() {

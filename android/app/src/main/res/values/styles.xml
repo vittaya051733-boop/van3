@@ -19,7 +19,6 @@
     <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
         <item name="android:windowBackground">?android:colorBackground</item>
     </style>
-
     <style name="IncomingCallTheme" parent="@android:style/Theme.Light.NoTitleBar.Fullscreen">
         <item name="android:windowIsTranslucent">false</item>
         <item name="android:windowBackground">#F5F7FF</item>

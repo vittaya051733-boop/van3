@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "com.vanmarket.rider" "\0"
-            VALUE "FileDescription", "van3" "\0"
+            VALUE "FileDescription", "RIDER" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "van3" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 com.vanmarket.rider. All rights reserved." "\0"
             VALUE "OriginalFilename", "van3.exe" "\0"
-            VALUE "ProductName", "van3" "\0"
+            VALUE "ProductName", "RIDER" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

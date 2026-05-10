@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+
+import 'services/rider_location_pusher.dart';
 
 class DriverScannerScreen extends StatefulWidget {
   const DriverScannerScreen({
@@ -189,6 +193,12 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
       'updatedAt': Timestamp.now(),
     });
 
+    // Push พิกัดตอนเริ่มจัดส่ง (action)
+    unawaited(RiderLocationPusher.pushOnce(
+      uid: user.uid,
+      source: 'order_pickup_scan',
+    ));
+
     if (!mounted) return;
     _scannerController.stop();
     await showDialog<void>(
@@ -261,6 +271,12 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
       'updatedAt': now,
       ...deliverySnapshot,
     });
+
+    // Push พิกัดตอนส่งสำเร็จ (action)
+    unawaited(RiderLocationPusher.pushOnce(
+      uid: user.uid,
+      source: 'order_delivered_scan',
+    ));
 
     if (!mounted) return;
     _scannerController.stop();

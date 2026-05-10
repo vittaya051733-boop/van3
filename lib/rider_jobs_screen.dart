@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -10,10 +12,13 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'services/rider_location_pusher.dart';
+
 import 'driver_scanner_screen.dart';
 import 'rider_chat_room_screen.dart';
 import 'utils/contact_phone_resolver.dart';
 import 'utils/order_call_launcher.dart';
+import 'utils/order_payment_label.dart';
 
 class RiderJobsScreen extends StatefulWidget {
   const RiderJobsScreen({super.key, this.showHistory = false});
@@ -318,6 +323,7 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
     final customerUid = _readCustomerUid(data);
     final shopOwnerUid = _readShopOwnerUid(data);
     final destinationCoords = _readDestinationCoordinates(data);
+    final paymentLabel = resolveOrderPaymentLabel(data);
 
     return FutureBuilder<_ResolvedOrderCardData>(
       future: _resolveOrderCardData(
@@ -424,6 +430,7 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                           'ร้าน: ${shopName?.isNotEmpty == true ? shopName : '-'}',
                         ),
                         Text('สถานะ: $status'),
+                        Text('วิธีจ่าย: ${paymentLabel ?? '-'}'),
                         Text('ค่าส่ง: THB ${shippingFee.toStringAsFixed(1)}'),
                         if (showHistory) ...[
                           Text(
@@ -1039,10 +1046,23 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
   }
 
   Future<void> _openMap(double lat, double lng) async {
-    final uri = Uri.parse(
+    // เปิด Google Maps แบบ navigation มอเตอร์ไซค์ (two-wheeler) ทันที
+    final navUri = Uri.parse('google.navigation:q=$lat,$lng&mode=l');
+    if (await launchUrl(navUri, mode: LaunchMode.externalApplication)) {
+      return;
+    }
+    // Fallback 1: Directions URL พร้อม travelmode=two-wheeler
+    final dirUri = Uri.parse(
+      'https://www.google.com/maps/dir/?api=1&destination=$lat,$lng&travelmode=two-wheeler&dir_action=navigate',
+    );
+    if (await launchUrl(dirUri, mode: LaunchMode.externalApplication)) {
+      return;
+    }
+    // Fallback 2: search
+    final searchUri = Uri.parse(
       'https://www.google.com/maps/search/?api=1&query=$lat,$lng',
     );
-    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    final ok = await launchUrl(searchUri, mode: LaunchMode.externalApplication);
     if (!ok) {
       debugPrint('Unable to open map for $lat,$lng');
     }
@@ -1230,6 +1250,12 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
             'deliveryProofCapturedById': currentUid,
             'deliveryProofCapturedByName': capturedByName,
           });
+
+      // Push พิกัดตอนส่งสำเร็จ (action)
+      unawaited(RiderLocationPusher.pushOnce(
+        uid: currentUid,
+        source: 'order_delivered_proof',
+      ));
 
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

@@ -9,8 +9,19 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'rider_jobs_screen.dart';
 import 'rider_location_permission_screen.dart';
-import 'services/fcm_token_sync_service.dart';
+import 'rider_settings_screen.dart';
 import 'wallet_screen.dart';
+
+bool _isVerifiedSlipOkFunctionCredit(Map<String, dynamic> data) {
+  final status = data['status']?.toString().trim().toLowerCase();
+  final provider = data['provider']?.toString().trim().toLowerCase();
+  final slipFeedbackId = data['slipFeedbackId']?.toString().trim();
+  return status == 'verified' &&
+      provider == 'slipok' &&
+      data['creditedByCloudFunction'] == true &&
+      slipFeedbackId != null &&
+      slipFeedbackId.isNotEmpty;
+}
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -21,6 +32,9 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   static const int _maxFreshPositionAgeSeconds = 45;
+  static const double _minimumReadyCredit = 500.0;
+  static const double _lowCreditWarningCredit = 600.0;
+  static const double _healthyCreditTarget = 3000.0;
   static const String _seenOrderIdsPrefsKey = 'van3_seen_pending_order_ids';
   static const int _maxPersistedSeenOrderIds = 200;
   static const Set<String> _eligibleVan2OrderSources = <String>{
@@ -35,10 +49,20 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isOnlineReady = false;
   bool _isPassengerReady = false;
   bool _isPromptingLocation = false;
+  bool _hasShownLowCreditWarning = false;
+  double? _currentCreditBalance;
   StreamSubscription<Position>? _positionSubscription;
   Timer? _locationHeartbeatTimer;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
+      _riderDocSubscription;
 
   bool get _hasAnyReadyMode => _isOnlineReady || _isPassengerReady;
+
+    bool get _hasLoadedCreditBalance => _currentCreditBalance != null;
+
+    bool get _hasEnoughCreditToOpenReady =>
+      _currentCreditBalance != null &&
+      _currentCreditBalance! >= _minimumReadyCredit;
 
   LocationSettings _buildLocationSettings({
     LocationAccuracy accuracy = LocationAccuracy.high,
@@ -127,6 +151,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _positionSubscription?.cancel();
     _locationHeartbeatTimer?.cancel();
     _newJobSubscription?.cancel();
+    _riderDocSubscription?.cancel();
     super.dispose();
   }
 
@@ -175,6 +200,9 @@ class _HomeScreenState extends State<HomeScreen> {
         .where('driverId', isEqualTo: user.uid)
         .where('status', isEqualTo: 'pending')
         .snapshots()
+        .handleError((Object error) {
+          debugPrint('[van3:new-job] stream error: $error');
+        })
         .listen((snapshot) {
           if (!_hasPrimedPendingSnapshot) {
             for (final doc in snapshot.docs) {
@@ -221,6 +249,17 @@ class _HomeScreenState extends State<HomeScreen> {
     final sourceApp = (data['sourceApp'] as String?)?.trim();
     if (sourceApp != 'van2_customer') {
       return false;
+    }
+
+    // Block notifications entirely when rider has turned ready toggles off.
+    final orderType = (data['orderType'] as String?)?.trim();
+    final serviceType = (data['serviceType'] as String?)?.trim();
+    final isTravel =
+        orderType == 'travel_passenger' || serviceType == 'travel_passenger';
+    if (isTravel) {
+      if (!_isPassengerReady) return false;
+    } else {
+      if (!_isOnlineReady) return false;
     }
 
     final customerConfirmed = data['customerConfirmed'] == true;
@@ -302,6 +341,18 @@ class _HomeScreenState extends State<HomeScreen> {
     return null;
   }
 
+  Map<String, dynamic>? _readStringKeyedMap(Object? value) {
+    if (value is Map<String, dynamic>) {
+      return value;
+    }
+    if (value is Map) {
+      return <String, dynamic>{
+        for (final entry in value.entries) entry.key.toString(): entry.value,
+      };
+    }
+    return null;
+  }
+
   double _calculateRiderNetShippingIncome(Map<String, dynamic> data) {
     final persisted = _readPersistedRiderNetIncome(data);
     if (persisted != null && persisted > 0) {
@@ -316,19 +367,16 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   double? _readPersistedRiderNetIncome(Map<String, dynamic> data) {
+    final financials = _readStringKeyedMap(data['deliveryFinancials']);
     return _toDouble(data['deliveryRiderNetIncome']) ??
-        _toDouble(
-          (data['deliveryFinancials']
-              as Map<String, dynamic>?)?['riderNetIncome'],
-        );
+        _toDouble(financials?['riderNetIncome']);
   }
 
   bool _isDeliveredToday(Map<String, dynamic> data) {
+    final financials = _readStringKeyedMap(data['deliveryFinancials']);
     final deliveredAt =
         _toDateTime(data['deliveredAt']) ??
-        _toDateTime(
-          (data['deliveryFinancials'] as Map<String, dynamic>?)?['completedAt'],
-        );
+        _toDateTime(financials?['completedAt']);
     if (deliveredAt == null) {
       return false;
     }
@@ -351,12 +399,10 @@ class _HomeScreenState extends State<HomeScreen> {
         continue;
       }
 
+      final financials = _readStringKeyedMap(data['deliveryFinancials']);
       final deliveredAt =
           _toDateTime(data['deliveredAt']) ??
-          _toDateTime(
-            (data['deliveryFinancials']
-                as Map<String, dynamic>?)?['completedAt'],
-          );
+          _toDateTime(financials?['completedAt']);
       if (deliveredAt == null) {
         continue;
       }
@@ -426,29 +472,43 @@ class _HomeScreenState extends State<HomeScreen> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
-    try {
-      final doc = await FirebaseFirestore.instance
-          .collection('riders')
-          .doc(user.uid)
-          .get();
-      if (!mounted) return;
-      setState(() {
-        _isOnlineReady = (doc.data()?['onlineReady'] as bool?) ?? false;
-        _isPassengerReady = (doc.data()?['passengerReady'] as bool?) ?? false;
-      });
+    // Subscribe to riders/{uid} so the toggle UI always mirrors Firestore.
+    // If anything else (admin tool, another device, Cloud Function) writes to
+    // this doc, the home screen will reflect the change immediately.
+    await _riderDocSubscription?.cancel();
+    _riderDocSubscription = FirebaseFirestore.instance
+        .collection('riders')
+        .doc(user.uid)
+        .snapshots()
+        .listen(
+          (snap) {
+            if (!mounted) return;
+            final data = snap.data();
+            final newOnline = (data?['onlineReady'] as bool?) ?? false;
+            final newPassenger = (data?['passengerReady'] as bool?) ?? false;
+            if (newOnline == _isOnlineReady &&
+                newPassenger == _isPassengerReady) {
+              return;
+            }
+            debugPrint(
+              '[van3:ready-stream] uid=${user.uid} online=$newOnline '
+              'passenger=$newPassenger',
+            );
+            setState(() {
+              _isOnlineReady = newOnline;
+              _isPassengerReady = newPassenger;
+            });
 
-      if (_hasAnyReadyMode) {
-        try {
-          await _startRealtimeLocationUpdates(user.uid);
-        } catch (_) {
-          // Keep app usable even if location stream cannot start at launch.
-        }
-      } else {
-        await _stopRealtimeLocationUpdates();
-      }
-    } catch (_) {
-      // Keep default false if the profile is not available yet.
-    }
+            if (_hasAnyReadyMode) {
+              unawaited(_startRealtimeLocationUpdates(user.uid));
+            } else {
+              unawaited(_stopRealtimeLocationUpdates());
+            }
+          },
+          onError: (Object error) {
+            debugPrint('[van3:ready-stream] error: $error');
+          },
+        );
   }
 
   Future<void> _ensureLocationReadyOnEntry() async {
@@ -576,30 +636,52 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     });
     try {
+      // ----- Turning ON: enforce GPS first ---------------------------------
+      if (value) {
+        final ok = await _ensureGpsReadyForToggle();
+        if (!ok) {
+          _showSnack('กรุณาเปิด GPS และอนุญาตสิทธิ์ตำแหน่งก่อนเปิดรับงาน');
+          return;
+        }
+      }
+
       final targetOnlineReady = isPassengerMode ? _isOnlineReady : value;
       final targetPassengerReady = isPassengerMode ? value : _isPassengerReady;
       final targetHasAnyReadyMode = targetOnlineReady || targetPassengerReady;
+
+      // ----- Build the Firestore payload -----------------------------------
+      // The key fields (onlineReady / passengerReady) are ALWAYS written so
+      // turning the toggle off reliably reaches the database, even if any
+      // optional step (GPS read, location stream, etc.) later throws.
       final payload = <String, dynamic>{
         'uid': user.uid,
         'email': user.email,
         'onlineReady': targetOnlineReady,
         'passengerReady': targetPassengerReady,
         'locationStreaming': targetHasAnyReadyMode,
+        'readyUpdatedAt': FieldValue.serverTimestamp(),
+        'readyUpdateSource': isPassengerMode
+            ? 'passenger_ready_toggle'
+            : 'ready_toggle',
         'locationCapturedAt': FieldValue.delete(),
         'updatedAt': FieldValue.delete(),
       };
 
       if (value) {
-        final position = await _getFreshCurrentPosition(
+        Position? position = await _getFreshCurrentPosition(
           maxAgeSeconds: _maxFreshPositionAgeSeconds,
+        ).catchError((_) => null);
+        position ??= await Geolocator.getLastKnownPosition().catchError(
+          (_) => null,
         );
-        if (position == null) {
-          throw Exception('ไม่พบพิกัดปัจจุบันของไรเดอร์');
-        }
 
-        payload.addAll(_positionPayload(position));
-        payload['locationUpdatedAt'] = FieldValue.serverTimestamp();
-        payload['locationStatus'] = 'streaming';
+        if (position != null) {
+          payload.addAll(_positionPayload(position));
+          payload['locationUpdatedAt'] = FieldValue.serverTimestamp();
+          payload['locationStatus'] = 'streaming';
+        } else {
+          payload['locationStatus'] = 'waiting_for_fix';
+        }
         payload['locationSource'] = isPassengerMode
             ? 'passenger_ready_toggle'
             : 'ready_toggle';
@@ -609,10 +691,25 @@ class _HomeScreenState extends State<HomeScreen> {
         payload['locationStatus'] = 'offline';
       }
 
-      await FirebaseFirestore.instance
-          .collection('riders')
-          .doc(user.uid)
-          .set(payload, SetOptions(merge: true));
+      // ----- Write to Firestore (this is the SINGLE source of truth) -------
+      debugPrint(
+        '[van3:ready-toggle] uid=${user.uid} onlineReady=$targetOnlineReady '
+        'passengerReady=$targetPassengerReady (was online=$_isOnlineReady, '
+        'passenger=$_isPassengerReady)',
+      );
+      try {
+        await FirebaseFirestore.instance
+            .collection('riders')
+            .doc(user.uid)
+            .set(payload, SetOptions(merge: true));
+        debugPrint(
+          '[van3:ready-toggle] WRITE OK riders/${user.uid} onlineReady=$targetOnlineReady',
+        );
+      } catch (e, st) {
+        debugPrint('[van3:ready-toggle] WRITE FAILED: $e\n$st');
+        _showSnack('บันทึกสถานะลง Firestore ไม่สำเร็จ: $e');
+        return; // Do NOT update local UI state if the write failed.
+      }
 
       if (!mounted) return;
       setState(() {
@@ -623,6 +720,13 @@ class _HomeScreenState extends State<HomeScreen> {
         _showSnack('$enabledMessage และบันทึกพิกัดลงระบบแล้ว');
       } else {
         _showSnack(disabledMessage);
+        // Best-effort release of pending orders the rider can no longer take.
+        unawaited(
+          _releasePendingOrdersForMode(
+            uid: user.uid,
+            isPassengerMode: isPassengerMode,
+          ),
+        );
       }
 
       if (targetHasAnyReadyMode) {
@@ -671,40 +775,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
     await _positionSubscription?.cancel();
     _locationHeartbeatTimer?.cancel();
+    _positionSubscription = null;
+    _locationHeartbeatTimer = null;
 
-    // Push immediately so Firestore gets location fields without waiting for stream tick.
+    // ลดการอัพเดทพิกัดให้เหลือแค่ตอนจำเป็น:
+    //   - ครั้งแรกตอน toggle online (ที่นี่)
+    //   - ตอน action ของออเดอร์ (accept/pickup/start delivering/deliver)
+    // ไม่มี position stream / heartbeat แบบเดิมอีกต่อไป
     await _pushCurrentLocationTick(uid, source: 'initial');
-
-    // Heartbeat keeps location fresh even when movement is minimal (common on emulator).
-    _locationHeartbeatTimer = Timer.periodic(const Duration(seconds: 8), (_) {
-      _pushCurrentLocationTick(uid, source: 'heartbeat');
-    });
-
-    _positionSubscription =
-        Geolocator.getPositionStream(
-          locationSettings: _buildLocationSettings(
-            accuracy: LocationAccuracy.high,
-            distanceFilter: 0,
-          ),
-        ).listen((position) async {
-          try {
-            if (!_isFreshPosition(
-              position,
-              maxAgeSeconds: _maxFreshPositionAgeSeconds,
-            )) {
-              return;
-            }
-
-            await _writeRiderLocationSnapshot(
-              uid: uid,
-              position: position,
-              source: 'stream',
-              forceOnlineReady: true,
-            );
-          } catch (_) {
-            // Ignore transient stream write errors, next location tick will retry.
-          }
-        });
   }
 
   Future<void> _stopRealtimeLocationUpdates() async {
@@ -712,6 +790,87 @@ class _HomeScreenState extends State<HomeScreen> {
     _locationHeartbeatTimer?.cancel();
     _positionSubscription = null;
     _locationHeartbeatTimer = null;
+  }
+
+  /// Ensures GPS service + permission are granted before toggling ready on.
+  /// Prompts the user to open Location settings or grant permission. Returns
+  /// true only when both service and permission are ready.
+  Future<bool> _ensureGpsReadyForToggle() async {
+    var serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    var permission = await Geolocator.checkPermission();
+
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+
+    if (!mounted) return false;
+
+    final permissionBlocked =
+        permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever;
+
+    if (!serviceEnabled || permissionBlocked) {
+      await _showLocationEnableDialog(
+        needService: !serviceEnabled,
+        deniedForever: permission == LocationPermission.deniedForever,
+      );
+      // Re-check after the user returns from settings.
+      serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      permission = await Geolocator.checkPermission();
+    }
+
+    final hasPermission =
+        permission == LocationPermission.always ||
+        permission == LocationPermission.whileInUse;
+    return serviceEnabled && hasPermission;
+  }
+
+  /// Release pending orders the rider was assigned to but is no longer ready
+  /// for. Clears `driverId` and flags `needsReassign=true` so the customer
+  /// app or a Cloud Function can hand the job to another rider.
+  Future<void> _releasePendingOrdersForMode({
+    required String uid,
+    required bool isPassengerMode,
+  }) async {
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('orders')
+          .where('driverId', isEqualTo: uid)
+          .where('status', isEqualTo: 'pending')
+          .get();
+      if (snapshot.docs.isEmpty) return;
+
+      final batch = FirebaseFirestore.instance.batch();
+      var releasedCount = 0;
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        final orderType = (data['orderType'] as String?)?.trim();
+        final serviceType = (data['serviceType'] as String?)?.trim();
+        final isTravel = orderType == 'travel_passenger' ||
+            serviceType == 'travel_passenger';
+        // Only release orders that match the mode we just closed.
+        if (isTravel != isPassengerMode) continue;
+
+        batch.update(doc.reference, <String, dynamic>{
+          'driverId': null,
+          'previousDriverId': uid,
+          'needsReassign': true,
+          'reassignReason': 'rider_closed_ready',
+          'status': 'awaiting_rider',
+          'riderNotifyReady': false,
+          'reassignRequestedAt': FieldValue.serverTimestamp(),
+        });
+        releasedCount++;
+      }
+      if (releasedCount > 0) {
+        await batch.commit();
+        debugPrint(
+          '[van3:release] released $releasedCount pending order(s) on close',
+        );
+      }
+    } catch (e) {
+      debugPrint('[van3:release] error releasing pending orders: $e');
+    }
   }
 
   Map<String, dynamic> _positionPayload(Position position) {
@@ -735,11 +894,12 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       if (position == null) return;
 
+      // Use the CURRENT ready flags — never force them on. Otherwise this
+      // heartbeat-style write would clobber the user's "close" toggle.
       await _writeRiderLocationSnapshot(
         uid: uid,
         position: position,
         source: source,
-        forceOnlineReady: true,
       );
     } catch (_) {
       // Ignore heartbeat failures, next tick will retry.
@@ -853,46 +1013,22 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      _showSnack('ไม่พบผู้ใช้ กรุณาเข้าสู่ระบบใหม่');
+    if (!_hasLoadedCreditBalance) {
+      final ok = await _refreshCreditBalanceOnce();
+      if (!ok || !_hasLoadedCreditBalance) {
+        _showSnack('ยังโหลดเครดิตไม่ได้ (ตรวจอินเทอร์เน็ต/Firestore)');
+        return;
+      }
+    }
+
+    if (!_hasEnoughCreditToOpenReady) {
+      _showCreditRequiredMessage();
       return;
     }
 
-    final allowed = await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(
-        builder: (_) => const RiderLocationPermissionScreen(),
-      ),
-    );
-
-    if (!mounted || allowed != true) {
-      _showSnack(
-        'ยังไม่สามารถเปิดพร้อมรับงานได้ เนื่องจากยังไม่ได้สิทธิ์พิกัด',
-      );
-      return;
-    }
-
-    final position = await _getFreshCurrentPosition(
-      maxAgeSeconds: _maxFreshPositionAgeSeconds,
-    );
-    if (position == null) {
-      _showSnack('ยังไม่พบพิกัดปัจจุบันของไรเดอร์ กรุณาลองใหม่อีกครั้ง');
-      return;
-    }
-
-    // Force-write a fresh location snapshot to riders/{uid} before going online.
-    try {
-      await _writeRiderLocationSnapshot(
-        uid: user.uid,
-        position: position,
-        source: 'permission_gate',
-        forceOnlineReady: true,
-      );
-    } catch (e) {
-      _showSnack('บันทึกพิกัดลงระบบไม่สำเร็จ: $e');
-      return;
-    }
-
+    // _setReadyMode เป็นคนตรวจ GPS + permission + เขียนพิกัด/onlineReady
+    // ลงใน Firestore แบบครบในที่เดียว ไม่ต้องทำซ้ำที่นี่
+    debugPrint('[van3:ready-toggle] tap OPEN delivery');
     await _setOnlineReady(true);
   }
 
@@ -902,53 +1038,21 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      _showSnack('ไม่พบผู้ใช้ กรุณาเข้าสู่ระบบใหม่');
+    if (!_hasLoadedCreditBalance) {
+      final ok = await _refreshCreditBalanceOnce();
+      if (!ok || !_hasLoadedCreditBalance) {
+        _showSnack('ยังโหลดเครดิตไม่ได้ (ตรวจอินเทอร์เน็ต/Firestore)');
+        return;
+      }
+    }
+
+    if (!_hasEnoughCreditToOpenReady) {
+      _showCreditRequiredMessage();
       return;
     }
 
-    final allowed = await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(
-        builder: (_) => const RiderLocationPermissionScreen(),
-      ),
-    );
-
-    if (!mounted || allowed != true) {
-      _showSnack(
-        'ยังไม่สามารถเปิดรับผู้โดยสารได้ เนื่องจากยังไม่ได้สิทธิ์พิกัด',
-      );
-      return;
-    }
-
-    final position = await _getFreshCurrentPosition(
-      maxAgeSeconds: _maxFreshPositionAgeSeconds,
-    );
-    if (position == null) {
-      _showSnack('ยังไม่พบพิกัดปัจจุบันของไรเดอร์ กรุณาลองใหม่อีกครั้ง');
-      return;
-    }
-
-    try {
-      await _writeRiderLocationSnapshot(
-        uid: user.uid,
-        position: position,
-        source: 'passenger_permission_gate',
-        forcePassengerReady: true,
-      );
-    } catch (e) {
-      _showSnack('บันทึกพิกัดลงระบบไม่สำเร็จ: $e');
-      return;
-    }
-
+    debugPrint('[van3:ready-toggle] tap OPEN passenger');
     await _setPassengerReady(true);
-  }
-
-  Future<void> _logout(BuildContext context) async {
-    await FcmTokenSyncService.instance.clearTokenBeforeLogout();
-    await FirebaseAuth.instance.signOut();
-    if (!context.mounted) return;
-    Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
   }
 
   void _onActionTap(BuildContext context, _DashboardAction action) {
@@ -980,6 +1084,13 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
+    if (action.title == 'ตั้งค่า') {
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(builder: (_) => const RiderSettingsScreen()),
+      );
+      return;
+    }
+
     if (action.title == 'พร้อมรับงาน') {
       _toggleOnlineReady();
       return;
@@ -998,6 +1109,110 @@ class _HomeScreenState extends State<HomeScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
     );
+  }
+
+  void _showCreditRequiredMessage() {
+    _showSnack(
+      'เครดิตต้องไม่ต่ำกว่า 500 บาท จึงจะเปิดรับงานได้ เพื่อป้องกันการส่งของให้ถึงมือลูกค้า',
+    );
+  }
+
+  void _syncCreditBalance(double creditTotal) {
+    if ((_currentCreditBalance ?? -1) == creditTotal) {
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() => _currentCreditBalance = creditTotal);
+
+      if (creditTotal > _lowCreditWarningCredit) {
+        _hasShownLowCreditWarning = false;
+        return;
+      }
+
+      if (creditTotal >= _minimumReadyCredit && !_hasShownLowCreditWarning) {
+        _hasShownLowCreditWarning = true;
+        _showLowCreditWarningDialog();
+      }
+    });
+  }
+
+  Future<bool> _refreshCreditBalanceOnce() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) {
+      return false;
+    }
+
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('credits')
+          .where('uid', isEqualTo: uid)
+          .get();
+
+      var total = 0.0;
+      for (final doc in snapshot.docs) {
+        final amount = doc.data()['amount'];
+        if (amount is num) {
+          total += amount.toDouble();
+        }
+      }
+
+      if (!mounted) return false;
+      setState(() => _currentCreditBalance = total);
+      debugPrint('[van3:credit] refreshed creditTotal=$total');
+      return true;
+    } catch (e) {
+      debugPrint('[van3:credit] refresh failed: $e');
+      return false;
+    }
+  }
+
+  Future<void> _showLowCreditWarningDialog() async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('เครดิตใกล้ถึงขั้นต่ำ'),
+          content: const Text(
+            'เครดิตของคุณใกล้ต่ำกว่า 500 บาท หากต่ำกว่า 500 บาท จะไม่สามารถเปิดรับงานได้ เพื่อป้องกันการส่งของให้ถึงมือลูกค้า',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('ปิด'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Color _creditProgressColor(double creditTotal) {
+    if (creditTotal >= _healthyCreditTarget) {
+      return const Color(0xFF22C55E);
+    }
+    if (creditTotal <= 1000) {
+      return const Color(0xFFEF4444);
+    }
+    return const Color(0xFFF59E0B);
+  }
+
+  String _creditLevelLabel(double creditTotal) {
+    if (creditTotal >= _healthyCreditTarget) {
+      return 'ระดับ 4 พร้อมรับงาน';
+    }
+    if (creditTotal >= 2000) {
+      return 'ระดับ 3';
+    }
+    if (creditTotal > 1000) {
+      return 'ระดับ 2';
+    }
+    if (creditTotal >= _minimumReadyCredit) {
+      return 'ระดับ 1 ใกล้ขั้นต่ำ';
+    }
+    return 'ต่ำกว่าขั้นต่ำ';
   }
 
   Future<void> _showTodayIncomeSummarySheet(BuildContext context) async {
@@ -1268,13 +1483,14 @@ class _HomeScreenState extends State<HomeScreen> {
                           ],
                         ),
                       ),
-                      IconButton(
-                        onPressed: () => _logout(context),
-                        icon: const Icon(
-                          Icons.logout_rounded,
-                          color: Colors.white,
+                      _RiderProfileAvatarButton(
+                        uid: currentUid,
+                        fallbackEmail: email,
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const RiderSettingsScreen(),
+                          ),
                         ),
-                        tooltip: 'ออกจากระบบ',
                       ),
                     ],
                   ),
@@ -1407,6 +1623,194 @@ class _HomeScreenState extends State<HomeScreen> {
                                     ],
                                   ),
                                 ),
+                                const SizedBox(height: 10),
+                                StreamBuilder<
+                                  QuerySnapshot<Map<String, dynamic>>
+                                >(
+                                  stream: currentUid == null
+                                      ? null
+                                      : FirebaseFirestore.instance
+                                            .collection('credits')
+                                            .where('uid', isEqualTo: currentUid)
+                                            .snapshots(),
+                                  builder: (context, creditSnapshot) {
+                                    final creditDocs =
+                                        creditSnapshot.data?.docs ??
+                                        const <
+                                          QueryDocumentSnapshot<
+                                            Map<String, dynamic>
+                                          >
+                                        >[];
+                                    var creditTotal = 0.0;
+                                    for (final creditDoc in creditDocs) {
+                                      final data = creditDoc.data();
+                                      final amount = data['amount'];
+                                      if (amount is num) {
+                                        creditTotal += amount.toDouble();
+                                      }
+                                    }
+                                    _syncCreditBalance(creditTotal);
+                                    final creditColor = _creditProgressColor(
+                                      creditTotal,
+                                    );
+                                    final creditProgress =
+                                        (creditTotal / _healthyCreditTarget)
+                                            .clamp(0.0, 1.0)
+                                            .toDouble();
+
+                                    return Container(
+                                      width: double.infinity,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 10,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withValues(
+                                          alpha: 0.14,
+                                        ),
+                                        borderRadius: BorderRadius.circular(16),
+                                        border: Border.all(
+                                          color: Colors.white.withValues(
+                                            alpha: 0.20,
+                                          ),
+                                        ),
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
+                                            children: [
+                                              Expanded(
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    const Text(
+                                                      'เครดิตไรเดอร์คงเหลือ',
+                                                      style: TextStyle(
+                                                        color: Color(
+                                                          0xFFFFF0DF,
+                                                        ),
+                                                        fontSize: 12,
+                                                        fontWeight:
+                                                            FontWeight.w600,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(height: 4),
+                                                    Text(
+                                                      'THB ${creditTotal.toStringAsFixed(2)}',
+                                                      style: const TextStyle(
+                                                        color: Colors.white,
+                                                        fontSize: 20,
+                                                        fontWeight:
+                                                            FontWeight.w800,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                              const SizedBox(width: 10),
+                                              FilledButton.icon(
+                                                onPressed: () =>
+                                                    Navigator.of(context).push(
+                                                      MaterialPageRoute<void>(
+                                                        builder: (_) =>
+                                                            const WalletScreen(),
+                                                      ),
+                                                    ),
+                                                style: FilledButton.styleFrom(
+                                                  backgroundColor: Colors.white,
+                                                  foregroundColor: const Color(
+                                                    0xFFE86D00,
+                                                  ),
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 12,
+                                                        vertical: 10,
+                                                      ),
+                                                ),
+                                                icon: const Icon(
+                                                  Icons.add_card_rounded,
+                                                  size: 18,
+                                                ),
+                                                label: const Text(
+                                                  'เติมเครดิต',
+                                                  style: TextStyle(
+                                                    fontSize: 12,
+                                                    fontWeight: FontWeight.w800,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 10),
+                                          ClipRRect(
+                                            borderRadius: BorderRadius.circular(
+                                              999,
+                                            ),
+                                            child: LinearProgressIndicator(
+                                              value: creditProgress,
+                                              minHeight: 9,
+                                              backgroundColor: Colors.white
+                                                  .withValues(alpha: 0.38),
+                                              valueColor:
+                                                  AlwaysStoppedAnimation<Color>(
+                                                    creditColor,
+                                                  ),
+                                            ),
+                                          ),
+                                          const SizedBox(height: 6),
+                                          Row(
+                                            children: [
+                                              const Text(
+                                                '0',
+                                                style: TextStyle(
+                                                  color: Color(0xFFFFF0DF),
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                              Expanded(
+                                                child: Text(
+                                                  _creditLevelLabel(
+                                                    creditTotal,
+                                                  ),
+                                                  textAlign: TextAlign.center,
+                                                  style: TextStyle(
+                                                    color: creditColor,
+                                                    fontSize: 11,
+                                                    fontWeight: FontWeight.w800,
+                                                  ),
+                                                ),
+                                              ),
+                                              const Text(
+                                                '3000',
+                                                style: TextStyle(
+                                                  color: Color(0xFFFFF0DF),
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          if (creditTotal <
+                                              _minimumReadyCredit) ...[
+                                            const SizedBox(height: 6),
+                                            const Text(
+                                              'เครดิตต่ำกว่า 500 บาท ปุ่มรับงานจะเปิดไม่ได้',
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    );
+                                  },
+                                ),
                                 const SizedBox(height: 12),
                                 Row(
                                   children: [
@@ -1429,7 +1833,11 @@ class _HomeScreenState extends State<HomeScreen> {
                           children: [
                             Expanded(
                               child: ElevatedButton.icon(
-                                onPressed: _isSettingOnline
+                                onPressed:
+                                    _isSettingOnline ||
+                                        (!_isOnlineReady &&
+                                      _hasLoadedCreditBalance &&
+                                      !_hasEnoughCreditToOpenReady)
                                     ? null
                                     : _toggleOnlineReady,
                                 style: ElevatedButton.styleFrom(
@@ -1472,7 +1880,11 @@ class _HomeScreenState extends State<HomeScreen> {
                             const SizedBox(width: 10),
                             Expanded(
                               child: ElevatedButton.icon(
-                                onPressed: _isSettingPassengerReady
+                                onPressed:
+                                    _isSettingPassengerReady ||
+                                        (!_isPassengerReady &&
+                                      _hasLoadedCreditBalance &&
+                                      !_hasEnoughCreditToOpenReady)
                                     ? null
                                     : _togglePassengerReady,
                                 style: ElevatedButton.styleFrom(
@@ -1530,7 +1942,11 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'ส่งของ: ${_isOnlineReady ? 'เปิดรับ' : 'ปิดรับ'} | ผู้โดยสาร: ${_isPassengerReady ? 'เปิดรับ' : 'ปิดรับ'}',
+                          !_hasLoadedCreditBalance
+                              ? 'กำลังโหลดเครดิต...'
+                              : !_hasEnoughCreditToOpenReady
+                              ? 'เครดิตต่ำกว่า 500 บาท ไม่สามารถเปิดรับงานได้'
+                              : 'ส่งของ: ${_isOnlineReady ? 'เปิดรับ' : 'ปิดรับ'} | ผู้โดยสาร: ${_isPassengerReady ? 'เปิดรับ' : 'ปิดรับ'}',
                           style: const TextStyle(
                             color: Color(0xFFFFF0DF),
                             fontWeight: FontWeight.w500,
@@ -1750,6 +2166,152 @@ class _DashboardAction {
     required this.icon,
     required this.color,
   });
+}
+
+class _RiderProfileAvatarButton extends StatelessWidget {
+  const _RiderProfileAvatarButton({
+    required this.uid,
+    required this.fallbackEmail,
+    required this.onTap,
+  });
+
+  final String? uid;
+  final String fallbackEmail;
+  final VoidCallback onTap;
+
+  String? _readTrimmedString(Object? value) {
+    final text = value?.toString().trim();
+    if (text == null || text.isEmpty) {
+      return null;
+    }
+    return text;
+  }
+
+  String? _photoUrlFromData(Map<String, dynamic>? data) {
+    return _readTrimmedString(
+      data?['photoUrl'] ??
+          data?['imageUrl'] ??
+          data?['profileImageUrl'] ??
+          data?['riderImageUrl'] ??
+          data?['avatarUrl'],
+    );
+  }
+
+  String _initialFromText(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty || trimmed == '-') {
+      return 'R';
+    }
+    return trimmed.characters.first.toUpperCase();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (uid == null || uid!.isEmpty) {
+      return _AvatarButtonShell(
+        photoUrl: _readTrimmedString(
+          FirebaseAuth.instance.currentUser?.photoURL,
+        ),
+        initial: _initialFromText(fallbackEmail),
+        onTap: onTap,
+      );
+    }
+
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('riders')
+          .doc(uid)
+          .snapshots(),
+      builder: (context, snapshot) {
+        final user = FirebaseAuth.instance.currentUser;
+        final data = snapshot.data?.data();
+        final name =
+            _readTrimmedString(data?['displayName']) ??
+            _readTrimmedString(data?['name']) ??
+            _readTrimmedString(data?['riderName']) ??
+            _readTrimmedString(user?.displayName) ??
+            fallbackEmail;
+
+        return _AvatarButtonShell(
+          photoUrl:
+              _photoUrlFromData(data) ?? _readTrimmedString(user?.photoURL),
+          initial: _initialFromText(name),
+          onTap: onTap,
+        );
+      },
+    );
+  }
+}
+
+class _AvatarButtonShell extends StatelessWidget {
+  const _AvatarButtonShell({
+    required this.photoUrl,
+    required this.initial,
+    required this.onTap,
+  });
+
+  final String? photoUrl;
+  final String initial;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'ตั้งค่า',
+      child: Material(
+        color: Colors.white.withValues(alpha: 0.18),
+        shape: const CircleBorder(),
+        child: InkWell(
+          onTap: onTap,
+          customBorder: const CircleBorder(),
+          child: Container(
+            width: 50,
+            height: 50,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.82),
+                width: 2,
+              ),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: photoUrl == null
+                ? _AvatarInitial(initial: initial)
+                : Image.network(
+                    photoUrl!,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) {
+                      return _AvatarInitial(initial: initial);
+                    },
+                  ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AvatarInitial extends StatelessWidget {
+  const _AvatarInitial({required this.initial});
+
+  final String initial;
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: Colors.white,
+      child: Center(
+        child: Text(
+          initial,
+          style: const TextStyle(
+            color: Color(0xFFFF6B00),
+            fontSize: 22,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _IncomeDaySummary {

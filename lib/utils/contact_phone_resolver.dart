@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 import 'phone_login_helper.dart';
 
@@ -36,6 +37,12 @@ class ContactPhoneResolver {
       return null;
     }
 
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUid == null || currentUid != uid) {
+      // Rider app normally cannot read other users' profiles due to Firestore rules.
+      return null;
+    }
+
     for (final collection in _customerCollections) {
       final phone = await _readPhoneFromDoc(collection: collection, docId: uid);
       if (phone != null) {
@@ -69,6 +76,11 @@ class ContactPhoneResolver {
     }
 
     for (final collection in _shopProfileCollections) {
+      final currentUid = FirebaseAuth.instance.currentUser?.uid;
+      if (currentUid == null || currentUid != uid) {
+        // Avoid hitting denied collections (e.g. users/) when not self.
+        break;
+      }
       final phone = await _readPhoneFromDoc(collection: collection, docId: uid);
       if (phone != null) {
         return phone;
