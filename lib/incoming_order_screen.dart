@@ -265,15 +265,30 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
     final paymentLabel = resolveOrderPaymentLabel(widget.initialData);
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(orderCode?.isNotEmpty == true ? 'Order $orderCode' : 'ออเดอร์ใหม่'),
-      ),
-      body: FutureBuilder<_IncomingOrderViewData>(
-        future: _viewDataFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
+      backgroundColor: const Color(0x99000000),
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: 430,
+                maxHeight: MediaQuery.sizeOf(context).height * 0.88,
+              ),
+              child: Material(
+                color: const Color(0xFFFFF7F2),
+                elevation: 18,
+                borderRadius: BorderRadius.circular(26),
+                clipBehavior: Clip.antiAlias,
+                child: FutureBuilder<_IncomingOrderViewData>(
+                  future: _viewDataFuture,
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const SizedBox(
+                        height: 220,
+                        child: Center(child: CircularProgressIndicator()),
+                      );
+                    }
 
           final viewData = snapshot.data ?? _IncomingOrderViewData.empty(widget.initialData);
           final products = viewData.products;
@@ -285,12 +300,28 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
           final pickupMapLabel = isTravelOrder ? 'แผนที่จุดรับ' : 'แผนที่ร้านค้า';
           final detailSectionTitle = isTravelOrder ? 'รายละเอียดการเดินทาง' : 'รายการสินค้า';
 
-          return SafeArea(
-            child: Column(
+          return Column(
               children: <Widget>[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFFF6B35),
+                  ),
+                  child: Text(
+                    orderCode?.isNotEmpty == true ? 'ออเดอร์ใหม่ $orderCode' : 'ออเดอร์ใหม่',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
                 Expanded(
                   child: ListView(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 14),
                     children: <Widget>[
                       _SectionCard(
                         child: Column(
@@ -332,7 +363,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 16),
+                            const SizedBox(height: 12),
                             Wrap(
                               runSpacing: 10,
                               spacing: 10,
@@ -347,7 +378,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 16),
+                            const SizedBox(height: 12),
                             Text(
                               '$destinationTitle: ${viewData.destinationLabel}',
                               style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
@@ -373,7 +404,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                 ),
                               ],
                             ],
-                            const SizedBox(height: 10),
+                            const SizedBox(height: 8),
                             Wrap(
                               spacing: 10,
                               runSpacing: 10,
@@ -405,7 +436,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                           ],
                         ),
                       ),
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 10),
                       _SectionCard(
                         title: 'ติดต่อ',
                         child: Column(
@@ -506,7 +537,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                           ],
                         ),
                       ),
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 10),
                       _SectionCard(
                         title: detailSectionTitle,
                         child: Column(
@@ -526,7 +557,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                   ),
                 ),
                 Container(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
                   decoration: const BoxDecoration(
                     color: Colors.white,
                     boxShadow: <BoxShadow>[
@@ -563,9 +594,13 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                   ),
                 ),
               ],
+            );
+                  },
+                ),
+              ),
             ),
-          );
-        },
+          ),
+        ),
       ),
     );
   }
@@ -1403,10 +1438,10 @@ class _SectionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(18),
         boxShadow: const <BoxShadow>[
           BoxShadow(
             color: Color(0x11000000),
@@ -1421,9 +1456,9 @@ class _SectionCard extends StatelessWidget {
           if (title != null) ...<Widget>[
             Text(
               title!,
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
           ],
           child,
         ],
@@ -1441,10 +1476,10 @@ class _InfoChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
         color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1469,29 +1504,29 @@ class _ShopAvatar extends StatelessWidget {
     final uri = imageUrl?.trim();
     if (uri == null || uri.isEmpty) {
       return Container(
-        width: 72,
-        height: 72,
+        width: 56,
+        height: 56,
         decoration: BoxDecoration(
           color: const Color(0xFFFFF1E8),
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(16),
         ),
-        child: const Icon(Icons.storefront_rounded, size: 34, color: Color(0xFFB45309)),
+        child: const Icon(Icons.storefront_rounded, size: 28, color: Color(0xFFB45309)),
       );
     }
 
     return ClipRRect(
-      borderRadius: BorderRadius.circular(20),
+      borderRadius: BorderRadius.circular(16),
       child: Image.network(
         uri,
-        width: 72,
-        height: 72,
+        width: 56,
+        height: 56,
         fit: BoxFit.cover,
         errorBuilder: (context, error, stackTrace) {
           return Container(
-            width: 72,
-            height: 72,
+            width: 56,
+            height: 56,
             color: const Color(0xFFFFF1E8),
-            child: const Icon(Icons.storefront_rounded, size: 34, color: Color(0xFFB45309)),
+            child: const Icon(Icons.storefront_rounded, size: 28, color: Color(0xFFB45309)),
           );
         },
       ),
@@ -1507,17 +1542,17 @@ class _ProductTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           _ProductImage(imageUrl: product.imageUrl),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1555,27 +1590,27 @@ class _ProductImage extends StatelessWidget {
     final uri = imageUrl?.trim();
     if (uri == null || uri.isEmpty) {
       return Container(
-        width: 72,
-        height: 72,
+        width: 56,
+        height: 56,
         decoration: BoxDecoration(
           color: const Color(0xFFE5E7EB),
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(12),
         ),
         child: const Icon(Icons.fastfood_rounded, color: Color(0xFF6B7280)),
       );
     }
 
     return ClipRRect(
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(12),
       child: Image.network(
         uri,
-        width: 72,
-        height: 72,
+        width: 56,
+        height: 56,
         fit: BoxFit.cover,
         errorBuilder: (context, error, stackTrace) {
           return Container(
-            width: 72,
-            height: 72,
+            width: 56,
+            height: 56,
             color: const Color(0xFFE5E7EB),
             child: const Icon(Icons.fastfood_rounded, color: Color(0xFF6B7280)),
           );

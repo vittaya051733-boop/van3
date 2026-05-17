@@ -2187,14 +2187,37 @@ class _RiderProfileAvatarButton extends StatelessWidget {
     return text;
   }
 
-  String? _photoUrlFromData(Map<String, dynamic>? data) {
-    return _readTrimmedString(
-      data?['photoUrl'] ??
-          data?['imageUrl'] ??
-          data?['profileImageUrl'] ??
-          data?['riderImageUrl'] ??
-          data?['avatarUrl'],
+  String? _nameFromData(Map<String, dynamic>? data) {
+    final directName = _readTrimmedString(
+      data?['displayName'] ??
+          data?['name'] ??
+          data?['riderName'] ??
+          data?['username'] ??
+          data?['userName'] ??
+          data?['fullName'],
     );
+    if (directName != null) {
+      return directName;
+    }
+
+    final firstName = _readTrimmedString(data?['firstName']);
+    final lastName = _readTrimmedString(data?['lastName']);
+    final fullName = <String>[if (firstName != null) firstName, if (lastName != null) lastName].join(' ');
+    return fullName.isEmpty ? null : fullName;
+  }
+
+  String? _nameFromUser(User? user) {
+    final displayName = _readTrimmedString(user?.displayName);
+    if (displayName != null) {
+      return displayName;
+    }
+
+    final email = _readTrimmedString(user?.email);
+    if (email == null) {
+      return null;
+    }
+    final atIndex = email.indexOf('@');
+    return atIndex > 0 ? email.substring(0, atIndex) : email;
   }
 
   String _initialFromText(String value) {
@@ -2207,12 +2230,11 @@ class _RiderProfileAvatarButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+
     if (uid == null || uid!.isEmpty) {
       return _AvatarButtonShell(
-        photoUrl: _readTrimmedString(
-          FirebaseAuth.instance.currentUser?.photoURL,
-        ),
-        initial: _initialFromText(fallbackEmail),
+        initial: _initialFromText(_nameFromUser(user) ?? fallbackEmail),
         onTap: onTap,
       );
     }
@@ -2223,18 +2245,13 @@ class _RiderProfileAvatarButton extends StatelessWidget {
           .doc(uid)
           .snapshots(),
       builder: (context, snapshot) {
-        final user = FirebaseAuth.instance.currentUser;
         final data = snapshot.data?.data();
         final name =
-            _readTrimmedString(data?['displayName']) ??
-            _readTrimmedString(data?['name']) ??
-            _readTrimmedString(data?['riderName']) ??
-            _readTrimmedString(user?.displayName) ??
+            _nameFromData(data) ??
+            _nameFromUser(user) ??
             fallbackEmail;
 
         return _AvatarButtonShell(
-          photoUrl:
-              _photoUrlFromData(data) ?? _readTrimmedString(user?.photoURL),
           initial: _initialFromText(name),
           onTap: onTap,
         );
@@ -2245,12 +2262,10 @@ class _RiderProfileAvatarButton extends StatelessWidget {
 
 class _AvatarButtonShell extends StatelessWidget {
   const _AvatarButtonShell({
-    required this.photoUrl,
     required this.initial,
     required this.onTap,
   });
 
-  final String? photoUrl;
   final String initial;
   final VoidCallback onTap;
 
@@ -2275,15 +2290,7 @@ class _AvatarButtonShell extends StatelessWidget {
               ),
             ),
             clipBehavior: Clip.antiAlias,
-            child: photoUrl == null
-                ? _AvatarInitial(initial: initial)
-                : Image.network(
-                    photoUrl!,
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) {
-                      return _AvatarInitial(initial: initial);
-                    },
-                  ),
+            child: _AvatarInitial(initial: initial),
           ),
         ),
       ),

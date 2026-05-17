@@ -8,7 +8,7 @@ plugins {
 
 android {
     namespace = "com.vanmarket.rider.van3"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

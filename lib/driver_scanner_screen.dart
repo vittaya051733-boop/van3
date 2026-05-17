@@ -60,10 +60,7 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
             controller: _scannerController,
             onDetect: _handleBarcode,
           ),
-          CustomPaint(
-            painter: _ScannerOverlayPainter(),
-            child: Container(),
-          ),
+          CustomPaint(painter: _ScannerOverlayPainter(), child: Container()),
           Positioned(
             bottom: 0,
             left: 0,
@@ -72,7 +69,9 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
                 color: Colors.black.withValues(alpha: 0.7),
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(20),
+                ),
               ),
               child: const Column(
                 mainAxisSize: MainAxisSize.min,
@@ -81,11 +80,15 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
                   SizedBox(height: 16),
                   Text(
                     'วางกล้องตรงกับ QR Code',
-                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   SizedBox(height: 8),
                   Text(
-                    'สแกน ORDER เพื่อเริ่มจัดส่ง\nสแกน LOCATION เพื่อปิดงานส่งสำเร็จ',
+                    'สแกน QR ออเดอร์เพื่อรับสินค้า\nและสแกน QR เดิมอีกครั้งเมื่อส่งสำเร็จ',
                     style: TextStyle(color: Colors.white70, fontSize: 14),
                     textAlign: TextAlign.center,
                   ),
@@ -135,6 +138,8 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
       final payload = _parseQrPayload(qrCode);
       if (payload == null) {
         _showError('QR Code ไม่ถูกต้อง');
+      } else if (payload.type == _QrPayloadType.universal) {
+        await _handleUniversalQr(payload);
       } else if (payload.type == _QrPayloadType.order) {
         await _handleOrderQr(payload);
       } else {
@@ -152,6 +157,30 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
     }
   }
 
+  Future<void> _handleUniversalQr(_ScannedQrPayload payload) async {
+    final orderDoc = await FirebaseFirestore.instance
+        .collection('orders')
+        .doc(widget.orderId)
+        .get();
+    if (!orderDoc.exists) {
+      _showError('ไม่พบออเดอร์นี้');
+      return;
+    }
+
+    final data = orderDoc.data() ?? <String, dynamic>{};
+    final status = (data['status'] as String?)?.trim() ?? '';
+    if (status == 'accepted' || status == 'ready') {
+      await _handleOrderQr(payload);
+      return;
+    }
+    if (status == 'delivering') {
+      await _handleLocationQr(payload);
+      return;
+    }
+
+    _showError('ออเดอร์นี้ยังใช้ QR เดียวไม่ได้ (สถานะ: $status)');
+  }
+
   Future<void> _handleOrderQr(_ScannedQrPayload payload) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
@@ -159,7 +188,9 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
       return;
     }
 
-    final orderRef = FirebaseFirestore.instance.collection('orders').doc(widget.orderId);
+    final orderRef = FirebaseFirestore.instance
+        .collection('orders')
+        .doc(widget.orderId);
     final orderDoc = await orderRef.get();
     if (!orderDoc.exists) {
       _showError('ไม่พบออเดอร์นี้');
@@ -194,10 +225,9 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
     });
 
     // Push พิกัดตอนเริ่มจัดส่ง (action)
-    unawaited(RiderLocationPusher.pushOnce(
-      uid: user.uid,
-      source: 'order_pickup_scan',
-    ));
+    unawaited(
+      RiderLocationPusher.pushOnce(uid: user.uid, source: 'order_pickup_scan'),
+    );
 
     if (!mounted) return;
     _scannerController.stop();
@@ -212,7 +242,9 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
             Text('เริ่มจัดส่งแล้ว'),
           ],
         ),
-        content: const Text('เมื่อถึงลูกค้าแล้ว ให้สแกน LOCATION QR เพื่อปิดงาน'),
+        content: const Text(
+          'เมื่อถึงลูกค้าแล้ว ให้สแกน QR ออเดอร์เดิมอีกครั้งเพื่อปิดงาน',
+        ),
         actions: [
           FilledButton(
             onPressed: () {
@@ -233,7 +265,9 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
       return;
     }
 
-    final orderRef = FirebaseFirestore.instance.collection('orders').doc(widget.orderId);
+    final orderRef = FirebaseFirestore.instance
+        .collection('orders')
+        .doc(widget.orderId);
     final orderDoc = await orderRef.get();
     if (!orderDoc.exists) {
       _showError('ไม่พบออเดอร์นี้');
@@ -273,10 +307,12 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
     });
 
     // Push พิกัดตอนส่งสำเร็จ (action)
-    unawaited(RiderLocationPusher.pushOnce(
-      uid: user.uid,
-      source: 'order_delivered_scan',
-    ));
+    unawaited(
+      RiderLocationPusher.pushOnce(
+        uid: user.uid,
+        source: 'order_delivered_scan',
+      ),
+    );
 
     if (!mounted) return;
     _scannerController.stop();
@@ -308,10 +344,7 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
   void _showError(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red,
-      ),
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
     );
   }
 
@@ -327,7 +360,10 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
       return null;
     }
 
-    final parts = rawBody.split('|').map((part) => part.trim()).toList(growable: false);
+    final parts = rawBody
+        .split('|')
+        .map((part) => part.trim())
+        .toList(growable: false);
     final orderId = parts.isNotEmpty ? parts.first : '';
     if (orderId.isEmpty) {
       return null;
@@ -350,6 +386,14 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
           orderCode: orderCode,
           orderTotal: total,
         );
+      case 'VAN_ORDER':
+      case 'ORDER_FLOW':
+        return _ScannedQrPayload(
+          type: _QrPayloadType.universal,
+          orderId: orderId,
+          orderCode: orderCode,
+          orderTotal: total,
+        );
       default:
         return null;
     }
@@ -365,9 +409,13 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
       mismatches.add('ออเดอร์ไอดีไม่ตรงกัน');
     }
 
-    final expectedOrderCode = (widget.orderCode ?? _readOrderCode(orderData) ?? '').trim();
-    final actualOrderCode = (payload.orderCode ?? _readOrderCode(orderData) ?? '').trim();
-    if (expectedOrderCode.isEmpty || actualOrderCode.isEmpty || expectedOrderCode != actualOrderCode) {
+    final expectedOrderCode =
+        (widget.orderCode ?? _readOrderCode(orderData) ?? '').trim();
+    final actualOrderCode =
+        (payload.orderCode ?? _readOrderCode(orderData) ?? '').trim();
+    if (expectedOrderCode.isEmpty ||
+        actualOrderCode.isEmpty ||
+        expectedOrderCode != actualOrderCode) {
       mismatches.add('หมายเลขออเดอร์ไม่ตรงกัน');
     }
 
@@ -389,6 +437,7 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
 
   double _readOrderTotal(Map<String, dynamic> data) {
     return _toDouble(data['grandTotal']) ??
+        _toDouble(data['totalAmount']) ??
         _toDouble(data['totalPrice']) ??
         _toDouble(data['subtotal']) ??
         0;
@@ -405,7 +454,8 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
       return direct;
     }
 
-    final subtotal = _toDouble(data['subtotal']) ?? _toDouble(data['totalPrice']) ?? 0;
+    final subtotal =
+        _toDouble(data['subtotal']) ?? _toDouble(data['totalPrice']) ?? 0;
     final grandTotal = _toDouble(data['grandTotal']) ?? subtotal;
     final delta = grandTotal - subtotal;
     if (delta > 0) {
@@ -422,7 +472,9 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
   }) {
     final safeGross = double.parse(grossShippingFee.toStringAsFixed(1));
     final platformFee = double.parse((safeGross * 0.15).toStringAsFixed(1));
-    final riderNetIncome = double.parse((safeGross - platformFee).toStringAsFixed(1));
+    final riderNetIncome = double.parse(
+      (safeGross - platformFee).toStringAsFixed(1),
+    );
 
     return <String, dynamic>{
       'deliveryGrossShippingFee': safeGross,
@@ -477,7 +529,7 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
   }
 }
 
-enum _QrPayloadType { order, location }
+enum _QrPayloadType { order, location, universal }
 
 class _ScannedQrPayload {
   const _ScannedQrPayload({
@@ -509,7 +561,9 @@ class _ScannerOverlayPainter extends CustomPainter {
       Path.combine(
         PathOperation.difference,
         Path()..addRect(Rect.fromLTWH(0, 0, size.width, size.height)),
-        Path()..addRRect(RRect.fromRectAndRadius(scanArea, const Radius.circular(16))),
+        Path()..addRRect(
+          RRect.fromRectAndRadius(scanArea, const Radius.circular(16)),
+        ),
       ),
       paint,
     );

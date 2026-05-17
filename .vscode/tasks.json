@@ -50,6 +50,18 @@
 			"problemMatcher": []
 		},
 		{
+			"label": "DO NOT USE - Deploy Functions (van3 blocked)",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"scripts/deploy-functions-isolated.ps1"
+			],
+			"problemMatcher": []
+		},
+		{
 			"label": "Run van3 by AVD name",
 			"type": "shell",
 			"command": "powershell",

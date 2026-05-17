@@ -315,7 +315,11 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
     final shopName = (data['shopName'] as String?)?.trim();
     final status = (data['status'] as String?)?.trim() ?? '-';
     final total =
-        (data['grandTotal'] as num?) ?? (data['totalPrice'] as num?) ?? 0;
+        (data['grandTotal'] as num?) ??
+        (data['totalAmount'] as num?) ??
+        (data['totalPrice'] as num?) ??
+        (data['subtotal'] as num?) ??
+        0;
     final products = ((data['products'] as List?) ?? const <dynamic>[])
         .whereType<Map>()
         .cast<Map<dynamic, dynamic>>()
@@ -1226,7 +1230,7 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
         completedSource: 'photo_proof',
       );
       final storagePath =
-          'delivery_proofs/$orderId/${DateTime.now().millisecondsSinceEpoch}_${captured.name}';
+          'riders/$currentUid/delivery_proofs/$orderId/${DateTime.now().millisecondsSinceEpoch}_${captured.name}';
       final storageRef = FirebaseStorage.instance.ref().child(storagePath);
       await storageRef.putFile(file);
       final proofUrl = await storageRef.getDownloadURL();
@@ -1252,10 +1256,12 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
           });
 
       // Push พิกัดตอนส่งสำเร็จ (action)
-      unawaited(RiderLocationPusher.pushOnce(
-        uid: currentUid,
-        source: 'order_delivered_proof',
-      ));
+      unawaited(
+        RiderLocationPusher.pushOnce(
+          uid: currentUid,
+          source: 'order_delivered_proof',
+        ),
+      );
 
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1266,9 +1272,15 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
       }
     } catch (error) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('บันทึกรูปยืนยันไม่สำเร็จ: $error')),
-        );
+        final message =
+            error is FirebaseException &&
+                error.plugin == 'firebase_storage' &&
+                error.code == 'unauthorized'
+            ? 'Firebase บล็อกการอัปโหลดรูป กรุณาลองใหม่อีกครั้ง'
+            : 'บันทึกรูปยืนยันไม่สำเร็จ: $error';
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(message)));
       }
     }
   }
