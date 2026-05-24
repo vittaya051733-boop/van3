@@ -4,11 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart' as overlay;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart'
-    as fln;
+  as fln;
 import 'package:permission_handler/permission_handler.dart';
 
 import 'forgot_password_screen.dart';
@@ -24,7 +26,9 @@ import 'firebase_options.dart';
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
   final type = message.data['type']?.toString();
   if (type == 'call' || type == 'call_cancel' || type == 'chat') {
     return;
@@ -48,53 +52,39 @@ void overlayMain() {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await _initializeFirebaseSafely();
-  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-  runApp(const Van3RiderApp());
-
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    unawaited(_initializeStartupServices());
-  });
-}
-
-Future<void> _initializeFirebaseSafely() async {
-  if (Firebase.apps.isNotEmpty) {
-    return;
-  }
   try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-  } on FirebaseException catch (error) {
-    if (error.code != 'duplicate-app') {
-      debugPrint('Firebase initialization failed: $error');
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
     }
-  } catch (error) {
-    debugPrint('Firebase initialization failed: $error');
-  }
-}
-
-Future<void> _initializeStartupServices() async {
-  await _initializeFirebaseSafely();
-  if (Firebase.apps.isEmpty) {
-    return;
-  }
-
-  final startupTasks = <Future<void> Function()>[
-    () => NotificationService().initialize(),
-    OverlayAlertService.initialize,
-    () => FcmTokenSyncService.instance.initialize(),
-    () => GlobalOrderAlertService.instance.initialize(),
-  ];
-
-  for (final task in startupTasks) {
-    try {
-      await task();
-    } catch (error, stackTrace) {
-      debugPrint('Startup service initialization failed: $error');
-      debugPrintStack(stackTrace: stackTrace);
+  } on FirebaseException catch (e) {
+    if (e.code != 'duplicate-app') {
+      rethrow;
     }
   }
+
+  try {
+    await FirebaseAppCheck.instance
+        .activate(
+          androidProvider: kReleaseMode
+              ? AndroidProvider.playIntegrity
+              : AndroidProvider.debug,
+        )
+        .timeout(const Duration(seconds: 5));
+    await FirebaseAppCheck.instance.setTokenAutoRefreshEnabled(true);
+  } catch (e) {
+    if (kDebugMode) {
+      debugPrint('App Check activate failed: $e');
+    }
+  }
+
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  await NotificationService().initialize();
+  await OverlayAlertService.initialize();
+  await FcmTokenSyncService.instance.initialize();
+  await GlobalOrderAlertService.instance.initialize();
+  runApp(const Van3RiderApp());
 }
 
 class OverlayAlertService {
@@ -116,6 +106,7 @@ class OverlayAlertService {
 
     await _initializeLocalNotifications();
     await _requestNotificationPermission();
+    await _requestOverlayPermission();
     _listenForegroundMessages();
     await _handleInitialMessage();
 
@@ -130,12 +121,11 @@ class OverlayAlertService {
       announcement: true,
       provisional: false,
     );
-    await FirebaseMessaging.instance
-        .setForegroundNotificationPresentationOptions(
-          alert: true,
-          badge: true,
-          sound: true,
-        );
+    await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
 
     final status = await Permission.notification.status;
     if (!status.isGranted) {
@@ -155,6 +145,13 @@ class OverlayAlertService {
           fln.AndroidFlutterLocalNotificationsPlugin
         >();
     await androidPlugin?.createNotificationChannel(_urgentChannel);
+  }
+
+  static Future<void> _requestOverlayPermission() async {
+    final isGranted = await overlay.FlutterOverlayWindow.isPermissionGranted();
+    if (!isGranted) {
+      await overlay.FlutterOverlayWindow.requestPermission();
+    }
   }
 
   static void _listenForegroundMessages() {
@@ -225,10 +222,8 @@ class OverlayAlertService {
     }
 
     try {
-      final orderSnapshot = await FirebaseFirestore.instance
-          .collection('orders')
-          .doc(orderId)
-          .get();
+      final orderSnapshot =
+          await FirebaseFirestore.instance.collection('orders').doc(orderId).get();
       final order = orderSnapshot.data();
       if (order == null) {
         return true;
@@ -236,8 +231,7 @@ class OverlayAlertService {
 
       final sourceApp = (order['sourceApp'] as String?)?.trim();
       if (sourceApp == 'van2_customer') {
-        return order['customerConfirmed'] == true &&
-            order['riderNotifyReady'] == true;
+        return order['customerConfirmed'] == true && order['riderNotifyReady'] == true;
       }
     } catch (_) {
       // Do not suppress legitimate alerts when lookup fails.
@@ -293,29 +287,26 @@ class OverlayAlertService {
   }
 
   static Future<void> showOverlayFromMessage(RemoteMessage message) async {
-    final title =
-        message.notification?.title ??
+    final title = message.notification?.title ??
         message.data['title']?.toString() ??
         'มีงานใหม่';
-    final body =
-        message.notification?.body ??
+    final body = message.notification?.body ??
         message.data['body']?.toString() ??
         'มีคำขอเรียกรถใหม่ กรุณาตรวจสอบทันที';
     final orderId = _extractOrderId(message.data);
 
     if (_shouldShowInAppDialog(message.data)) {
-      await _showInAppOrderAlert(title: title, body: body, orderId: orderId);
+      await _showInAppOrderAlert(
+        title: title,
+        body: body,
+        orderId: orderId,
+      );
     }
 
-    await _showUrgentLocalNotification(
-      title: title,
-      body: body,
-      data: message.data,
-    );
+    await _showUrgentLocalNotification(title: title, body: body, data: message.data);
 
     try {
-      final hasPermission =
-          await overlay.FlutterOverlayWindow.isPermissionGranted();
+      final hasPermission = await overlay.FlutterOverlayWindow.isPermissionGranted();
       if (!hasPermission) {
         await overlay.FlutterOverlayWindow.requestPermission();
       }
@@ -350,9 +341,7 @@ class OverlayAlertService {
     String? orderId,
   }) async {
     final navigatorState = Van3RiderApp.navigatorKey.currentState;
-    final context =
-        navigatorState?.overlay?.context ??
-        Van3RiderApp.navigatorKey.currentContext;
+    final context = navigatorState?.overlay?.context ?? Van3RiderApp.navigatorKey.currentContext;
     if (navigatorState == null || context == null) {
       return;
     }
@@ -376,10 +365,7 @@ class OverlayAlertService {
           return SafeArea(
             child: Center(
               child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 24,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
                 child: Material(
                   color: Colors.transparent,
                   child: Container(
@@ -466,20 +452,15 @@ class OverlayAlertService {
                           children: <Widget>[
                             Expanded(
                               child: OutlinedButton(
-                                onPressed: () =>
-                                    Navigator.of(dialogContext).pop('dismiss'),
+                                onPressed: () => Navigator.of(dialogContext).pop('dismiss'),
                                 child: const Text('ปิดก่อน'),
                               ),
                             ),
                             const SizedBox(width: 10),
                             Expanded(
                               child: FilledButton.icon(
-                                onPressed: () => Navigator.of(
-                                  dialogContext,
-                                ).pop('open_jobs'),
-                                icon: const Icon(
-                                  Icons.assignment_turned_in_rounded,
-                                ),
+                                onPressed: () => Navigator.of(dialogContext).pop('open_jobs'),
+                                icon: const Icon(Icons.assignment_turned_in_rounded),
                                 label: const Text('เปิดหน้ารับงาน'),
                               ),
                             ),
@@ -493,21 +474,20 @@ class OverlayAlertService {
             ),
           );
         },
-        transitionBuilder:
-            (dialogContext, animation, secondaryAnimation, child) {
-              final curved = CurvedAnimation(
-                parent: animation,
-                curve: Curves.easeOutCubic,
-                reverseCurve: Curves.easeInCubic,
-              );
-              return FadeTransition(
-                opacity: curved,
-                child: ScaleTransition(
-                  scale: Tween<double>(begin: 0.94, end: 1).animate(curved),
-                  child: child,
-                ),
-              );
-            },
+        transitionBuilder: (dialogContext, animation, secondaryAnimation, child) {
+          final curved = CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutCubic,
+            reverseCurve: Curves.easeInCubic,
+          );
+          return FadeTransition(
+            opacity: curved,
+            child: ScaleTransition(
+              scale: Tween<double>(begin: 0.94, end: 1).animate(curved),
+              child: child,
+            ),
+          );
+        },
       );
 
       if (action == 'open_jobs' && navigatorState.mounted) {
@@ -566,23 +546,10 @@ class GlobalOrderAlertService {
   GlobalOrderAlertService._();
 
   static final GlobalOrderAlertService instance = GlobalOrderAlertService._();
-  static const MethodChannel _orderIntentChannel = MethodChannel(
-    'van.rider/order_intents',
-  );
-  static const String _methodDrainPendingOrderIntents =
-      'drain_pending_order_intents';
-  static const Set<String> _eligibleVan2OrderSources = <String>{
-    'cod_confirm_dialog',
-    'travel_cod_confirm_dialog',
-    'promptpay_slip_dialog',
-    'travel_promptpay_slip_dialog',
-  };
+  static const MethodChannel _orderIntentChannel = MethodChannel('van.rider/order_intents');
+  static const String _methodDrainPendingOrderIntents = 'drain_pending_order_intents';
 
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _orderSubscription;
-  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
-      _riderReadySubscription;
-  bool _isOnlineReady = false;
-  bool _isPassengerReady = false;
   final Set<String> _seenOrderIds = <String>{};
   bool _initialized = false;
   bool _primed = false;
@@ -603,9 +570,6 @@ class GlobalOrderAlertService {
 
     FirebaseAuth.instance.authStateChanges().listen((user) {
       _orderSubscription?.cancel();
-      _riderReadySubscription?.cancel();
-      _isOnlineReady = false;
-      _isPassengerReady = false;
       _seenOrderIds.clear();
       _primed = false;
       _listenerStartedAt = null;
@@ -615,31 +579,12 @@ class GlobalOrderAlertService {
       }
 
       _listenerStartedAt = DateTime.now();
-      _riderReadySubscription = FirebaseFirestore.instance
-          .collection('riders')
-          .doc(user.uid)
-          .snapshots()
-          .listen(
-            (snap) {
-              final data = snap.data();
-              _isOnlineReady = (data?['onlineReady'] as bool?) ?? false;
-              _isPassengerReady = (data?['passengerReady'] as bool?) ?? false;
-            },
-            onError: (Object error, StackTrace stack) {
-              debugPrint('[van3:rider-ready] error: $error');
-            },
-          );
       _orderSubscription = FirebaseFirestore.instance
           .collection('orders')
           .where('driverId', isEqualTo: user.uid)
           .where('status', isEqualTo: 'pending')
           .snapshots()
-          .listen(
-            _handleSnapshot,
-            onError: (Object error, StackTrace stack) {
-              debugPrint('[van3:order-listener] error: $error');
-            },
-          );
+          .listen(_handleSnapshot);
     });
 
     _initialized = true;
@@ -661,8 +606,8 @@ class GlobalOrderAlertService {
 
   Future<void> _drainPendingPlatformOrderIntents() async {
     try {
-      final List<dynamic>? pending = await _orderIntentChannel
-          .invokeListMethod<dynamic>(_methodDrainPendingOrderIntents);
+      final List<dynamic>? pending =
+          await _orderIntentChannel.invokeListMethod<dynamic>(_methodDrainPendingOrderIntents);
       if (pending == null) return;
       for (final dynamic rawPayload in pending) {
         await _handleIncomingOrderPayload(rawPayload);
@@ -705,9 +650,7 @@ class GlobalOrderAlertService {
       return;
     }
 
-    final pendingEntries = _pendingPlatformOrders.entries.toList(
-      growable: false,
-    );
+    final pendingEntries = _pendingPlatformOrders.entries.toList(growable: false);
     for (final entry in pendingEntries) {
       final shown = await _openIncomingOrderById(
         entry.key,
@@ -736,10 +679,7 @@ class GlobalOrderAlertService {
     Map<String, dynamic>? payload,
   }) async {
     try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('orders')
-          .doc(orderId)
-          .get();
+      final snapshot = await FirebaseFirestore.instance.collection('orders').doc(orderId).get();
       final data = snapshot.data();
       if (data != null && _shouldShowOrder(data)) {
         _seenOrderIds.add(orderId);
@@ -771,9 +711,7 @@ class GlobalOrderAlertService {
     return false;
   }
 
-  Future<void> _handleSnapshot(
-    QuerySnapshot<Map<String, dynamic>> snapshot,
-  ) async {
+  Future<void> _handleSnapshot(QuerySnapshot<Map<String, dynamic>> snapshot) async {
     if (!_primed) {
       for (final doc in snapshot.docs) {
         if (_shouldShowOrder(doc.data())) {
@@ -811,17 +749,6 @@ class GlobalOrderAlertService {
     if (sourceApp != 'van2_customer') {
       return false;
     }
-    // Block all incoming orders if the rider has switched off the matching
-    // ready toggle (delivery vs passenger).
-    final orderType = (data['orderType'] as String?)?.trim();
-    final serviceType = (data['serviceType'] as String?)?.trim();
-    final isTravel =
-        orderType == 'travel_passenger' || serviceType == 'travel_passenger';
-    if (isTravel) {
-      if (!_isPassengerReady) return false;
-    } else {
-      if (!_isOnlineReady) return false;
-    }
     if (data['customerConfirmed'] != true || data['riderNotifyReady'] != true) {
       return false;
     }
@@ -834,7 +761,7 @@ class GlobalOrderAlertService {
       return false;
     }
     final createdSource = (audit['createdSource'] as String?)?.trim();
-    if (!_eligibleVan2OrderSources.contains(createdSource)) {
+    if (createdSource != 'cod_confirm_dialog') {
       return false;
     }
     final status = (data['status'] as String?)?.trim();
@@ -855,9 +782,7 @@ class GlobalOrderAlertService {
       return false;
     }
     candidates.sort((a, b) => b.compareTo(a));
-    return candidates.first.isAfter(
-      startedAt.subtract(const Duration(seconds: 3)),
-    );
+    return candidates.first.isAfter(startedAt.subtract(const Duration(seconds: 3)));
   }
 
   DateTime? _toDateTime(Object? value) {
@@ -879,9 +804,7 @@ class GlobalOrderAlertService {
     }
 
     final navigatorState = Van3RiderApp.navigatorKey.currentState;
-    final context =
-        navigatorState?.overlay?.context ??
-        Van3RiderApp.navigatorKey.currentContext;
+    final context = navigatorState?.overlay?.context ?? Van3RiderApp.navigatorKey.currentContext;
     if (navigatorState == null || context == null) {
       return false;
     }
@@ -890,8 +813,10 @@ class GlobalOrderAlertService {
     try {
       await navigatorState.push(
         MaterialPageRoute<void>(
-          builder: (_) =>
-              IncomingOrderScreen(orderId: orderId, initialData: data),
+          builder: (_) => IncomingOrderScreen(
+            orderId: orderId,
+            initialData: data,
+          ),
         ),
       );
       return true;
@@ -907,8 +832,7 @@ class GlobalOrderAlertService {
 class Van3RiderApp extends StatelessWidget {
   const Van3RiderApp({super.key});
 
-  static final GlobalKey<NavigatorState> navigatorKey =
-      GlobalKey<NavigatorState>();
+  static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
   Future<FirebaseApp> _initializeFirebase() {
     if (Firebase.apps.isNotEmpty) {
@@ -925,7 +849,7 @@ class Van3RiderApp extends StatelessWidget {
       future: _initializeFirebase(),
       builder: (context, snapshot) {
         return MaterialApp(
-          title: 'RIDER',
+          title: 'Van3 Rider',
           debugShowCheckedModeBanner: false,
           navigatorKey: navigatorKey,
           theme: ThemeData(
@@ -981,13 +905,9 @@ class Van3RiderApp extends StatelessWidget {
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, authSnapshot) {
         if (authSnapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
+          return const Scaffold(body: Center(child: CircularProgressIndicator()));
         }
-        return authSnapshot.hasData
-            ? const HomeScreen()
-            : const WelcomeScreen();
+        return authSnapshot.hasData ? const HomeScreen() : const WelcomeScreen();
       },
     );
   }

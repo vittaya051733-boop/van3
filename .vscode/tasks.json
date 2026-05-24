@@ -1,78 +1,45 @@
 {
-	"version": "2.0.0",
-	"tasks": [
-		{
-			"label": "Deploy Storage Isolated (van3)",
-			"type": "shell",
-			"command": "powershell",
-			"args": [
-				"-ExecutionPolicy",
-				"Bypass",
-				"-File",
-				"scripts/deploy-storage-isolated.ps1"
-			],
-			"problemMatcher": []
-		},
-		{
-			"label": "Deploy Firestore Isolated (van3)",
-			"type": "shell",
-			"command": "powershell",
-			"args": [
-				"-ExecutionPolicy",
-				"Bypass",
-				"-File",
-				"scripts/deploy-firestore-isolated.ps1"
-			],
-			"problemMatcher": []
-		},
-		{
-			"label": "Deploy Isolated (van3)",
-			"type": "shell",
-			"command": "powershell",
-			"args": [
-				"-ExecutionPolicy",
-				"Bypass",
-				"-File",
-				"scripts/deploy-isolated.ps1"
-			],
-			"problemMatcher": []
-		},
-		{
-			"label": "DO NOT USE - Deploy Rules (van-merchant)",
-			"type": "shell",
-			"command": "powershell",
-			"args": [
-				"-ExecutionPolicy",
-				"Bypass",
-				"-File",
-				"scripts/deploy-van-merchant-rules.ps1"
-			],
-			"problemMatcher": []
-		},
-		{
-			"label": "DO NOT USE - Deploy Functions (van3 blocked)",
-			"type": "shell",
-			"command": "powershell",
-			"args": [
-				"-ExecutionPolicy",
-				"Bypass",
-				"-File",
-				"scripts/deploy-functions-isolated.ps1"
-			],
-			"problemMatcher": []
-		},
-		{
-			"label": "Run van3 by AVD name",
-			"type": "shell",
-			"command": "powershell",
-			"args": [
-				"-NoProfile",
-				"-ExecutionPolicy",
-				"Bypass",
-				"-File",
-				"scripts/run-van3-by-avd.ps1"
-			],
-			"isBackground": true
-		}
-	]
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Deploy Help — Safe Deploy Governance",
+      "type": "shell",
+      "command": "powershell",
+      "args": ["-ExecutionPolicy", "Bypass", "-File", "..\\van2\\scripts\\deploy-safe.ps1", "-Action", "help"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Preflight — Storage (van3)",
+      "type": "shell",
+      "command": "powershell",
+      "args": ["-ExecutionPolicy", "Bypass", "-File", "..\\van2\\scripts\\deploy-preflight.ps1", "-App", "van3", "-Target", "storage"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Deploy Storage Isolated (van3)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy", "Bypass", "-File", "scripts\\deploy-storage-isolated.ps1",
+        "-ConfirmDeploy", "APPROVE:van3:van-merchant",
+        "-ConfirmFile", "storage.rules",
+        "-ConfirmImpact", "SELF:van3",
+        "-InteractiveConfirm"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Deploy Firestore (delegate van2 — SHARED)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy", "Bypass", "-File", "scripts\\deploy-firestore-isolated.ps1",
+        "-ConfirmDeploy", "APPROVE:van3:van-merchant",
+        "-ConfirmFile", "firestore.rules",
+        "-ConfirmImpact", "SHARED:van1,van2,van3,van4",
+        "-InteractiveConfirm"
+      ],
+      "problemMatcher": []
+    }
+  ]
 }

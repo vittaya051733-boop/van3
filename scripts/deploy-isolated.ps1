@@ -1,58 +1,62 @@
 param(
   [switch]$BuildWeb,
-  [switch]$DeployHosting
+  [switch]$DeployHosting,
+  [string]$ConfirmDeploy,
+  [string]$ConfirmFile,
+  [string]$ConfirmImpact,
+  [switch]$InteractiveConfirm,
+  [string]$FinalAcknowledge,
+  [switch]$DryRun
 )
 
 $ErrorActionPreference = 'Stop'
-$scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$appRoot = Split-Path -Parent $scriptRoot
-Set-Location $appRoot
+$importScript = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\van2\scripts\deploy-governance-import.ps1'))
+. $importScript -CallingScriptRoot $PSScriptRoot
 
-$expectedProjectId = 'van-merchant'
-$hostingTarget = 'van3'
-$firestoreScript = Join-Path $scriptRoot 'deploy-firestore-isolated.ps1'
-$storageScript = Join-Path $scriptRoot 'deploy-storage-isolated.ps1'
+$cfg = Get-VanGovernanceConfig
+$appCfg = $cfg.Apps['van3']
+$storageScript = Join-Path $PSScriptRoot 'deploy-storage-isolated.ps1'
 
-if (-not (Get-Command firebase -ErrorAction SilentlyContinue)) {
-  Write-Error 'Firebase CLI was not found in PATH.'
-  exit 1
+$expectedFile = 'storage.rules'
+if ($DeployHosting) {
+  $expectedFile = 'storage.rules,firebase.json'
 }
 
-if (-not (Test-Path '.firebaserc') -or -not (Test-Path 'firebase.json')) {
-  Write-Error 'Missing .firebaserc or firebase.json.'
-  exit 1
-}
+Invoke-VanDeployGuardSession `
+  -App 'van3' `
+  -ConfirmDeploy $ConfirmDeploy `
+  -ConfirmFile $ConfirmFile `
+  -ExpectedFile $expectedFile `
+  -ConfirmImpact $ConfirmImpact `
+  -ExpectedImpact 'SELF:van3' `
+  -FinalAcknowledge $FinalAcknowledge `
+  -InteractiveConfirm:$InteractiveConfirm
 
-$rc = Get-Content '.firebaserc' -Raw | ConvertFrom-Json
-$projectId = $rc.projects.default
-if ($projectId -ne $expectedProjectId) {
-  Write-Error "Configured project '$projectId' does not match expected '$expectedProjectId'."
-  exit 1
-}
-
-if (-not (Test-Path $storageScript)) {
-  Write-Error "Missing deploy script: $storageScript"
-  exit 1
-}
-
-Write-Host 'Skipping Firestore deploy for van3 because the project still uses a shared default database.' -ForegroundColor DarkYellow
-Write-Host 'Deploying isolated Storage rules next...' -ForegroundColor DarkCyan
-& powershell -ExecutionPolicy Bypass -File $storageScript
+Write-Host 'Skipping shared Firestore (default DB). Use van2/scripts/deploy-firestore-isolated.ps1 for canonical rules.' -ForegroundColor DarkYellow
+Write-Host 'Deploying isolated Storage rules (SELF:van3)...' -ForegroundColor DarkCyan
+& $storageScript -ConfirmDeploy $ConfirmDeploy -ConfirmFile 'storage.rules' -ConfirmImpact 'SELF:van3' -FinalAcknowledge $FinalAcknowledge -DryRun:$DryRun
 
 if (-not $DeployHosting) {
-  Write-Host 'Routine isolated deploy skips hosting. Use -DeployHosting when you need to publish van3 web hosting explicitly.' -ForegroundColor DarkYellow
+  Write-Host 'Routine deploy skips hosting. Use -DeployHosting to publish van3 web hosting.' -ForegroundColor DarkYellow
   return
 }
 
-$hostingMap = $rc.targets.$expectedProjectId.hosting.$hostingTarget
+Assert-VanAppCanDeploy -App 'van3' -Target 'hosting'
+Set-Location $appCfg.Root
+$rc = Get-Content (Join-Path $appCfg.Root '.firebaserc') -Raw | ConvertFrom-Json
+$hostingTarget = $appCfg.HostingTarget
+$hostingMap = $rc.targets.$($cfg.ProjectId).hosting.$hostingTarget
 if (-not $hostingMap -or $hostingMap.Count -eq 0) {
-  Write-Error "Hosting target '$hostingTarget' is not mapped. Run: firebase target:apply hosting $hostingTarget <SITE_ID> --project $expectedProjectId"
-  exit 1
+  throw "Hosting target '$hostingTarget' is not mapped."
 }
 
 if ($BuildWeb) {
   flutter build web
 }
 
-Write-Host "Deploying isolated target: hosting:$hostingTarget" -ForegroundColor Cyan
-firebase deploy --project $expectedProjectId --only "hosting:$hostingTarget"
+Write-Host "Deploying hosting:$hostingTarget (SELF:van3)" -ForegroundColor Cyan
+if ($DryRun) {
+  Write-Host '[dry-run] Skipping firebase deploy for hosting.' -ForegroundColor Yellow
+  return
+}
+firebase deploy --project $cfg.ProjectId --only "hosting:$hostingTarget"

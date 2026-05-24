@@ -1,9 +1,5 @@
-param(
-  [switch]$FirestoreOnly,
-  [switch]$StorageOnly
-)
+param([switch]$FirestoreOnly, [switch]$StorageOnly)
 
 $ErrorActionPreference = 'Stop'
-
-Write-Error 'BLOCKED: Shared deploy script is disabled to prevent cross-app impact. Use isolated scripts/tasks instead: deploy-firestore-isolated.ps1 or deploy-storage-isolated.ps1.'
+Write-Error 'BLOCKED: Use van2\scripts\deploy-safe.ps1 or deploy-*-isolated.ps1. See van2\scripts\DEPLOY_GOVERNANCE.md'
 exit 1
