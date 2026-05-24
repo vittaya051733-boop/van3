@@ -7,22 +7,10 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 
 import 'rider_jobs_screen.dart';
-import 'rider_location_permission_screen.dart';
 import 'rider_settings_screen.dart';
 import 'wallet_screen.dart';
 import 'services/rider_orders_service.dart';
 import 'utils/order_pay_at_destination.dart';
-
-bool _isVerifiedSlipOkFunctionCredit(Map<String, dynamic> data) {
-  final status = data['status']?.toString().trim().toLowerCase();
-  final provider = data['provider']?.toString().trim().toLowerCase();
-  final slipFeedbackId = data['slipFeedbackId']?.toString().trim();
-  return status == 'verified' &&
-      provider == 'slipok' &&
-      data['creditedByCloudFunction'] == true &&
-      slipFeedbackId != null &&
-      slipFeedbackId.isNotEmpty;
-}
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -177,12 +165,6 @@ class _HomeScreenState extends State<HomeScreen> {
     return readRiderNetShippingIncome(data) ?? 0;
   }
 
-  double? _readPersistedRiderNetIncome(Map<String, dynamic> data) {
-    final financials = _readStringKeyedMap(data['deliveryFinancials']);
-    return _toDouble(data['deliveryRiderNetIncome']) ??
-        _toDouble(financials?['riderNetIncome']);
-  }
-
   bool _isDeliveredToday(Map<String, dynamic> data) {
     final financials = _readStringKeyedMap(data['deliveryFinancials']);
     final deliveredAt =
@@ -255,28 +237,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final month = dateTime.month.toString().padLeft(2, '0');
     final year = dateTime.year.toString();
     return '$day/$month/$year';
-  }
-
-  double _readShippingFeeAmount(Map<String, dynamic> data) {
-    final direct =
-        _toDouble(data['shippingFee']) ??
-        _toDouble(data['deliveryFee']) ??
-        _toDouble(data['deliveryCharge']) ??
-        _toDouble(data['shipping']) ??
-        0;
-    if (direct > 0) {
-      return direct;
-    }
-
-    final subtotal =
-        _toDouble(data['subtotal']) ?? _toDouble(data['totalPrice']) ?? 0;
-    final grandTotal = _toDouble(data['grandTotal']) ?? subtotal;
-    final delta = grandTotal - subtotal;
-    if (delta > 0) {
-      return delta;
-    }
-
-    return 0;
   }
 
   Future<void> _loadReadyStatuses() async {
@@ -1912,7 +1872,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             fontSize: 11,
                             fontWeight: FontWeight.w700,
                             color: Color(0xFF2D2D2D),
-                            height: 1.15,
+                            height: 1.25,
+                            decoration: TextDecoration.none,
                           ),
                         ),
                       ],
