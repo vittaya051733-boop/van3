@@ -7,6 +7,8 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'qr_scanner_screen.dart';
 import 'wallet_action_dialogs.dart';
 import 'wallet_top_up_dialog.dart';
+import 'services/rider_orders_service.dart';
+import 'utils/order_pay_at_destination.dart';
 
 class WalletScreen extends StatefulWidget {
   const WalletScreen({super.key});
@@ -84,16 +86,7 @@ class _WalletScreenState extends State<WalletScreen> {
   }
 
   double _calculateRiderNetShippingIncome(Map<String, dynamic> data) {
-    final persisted = _readPersistedRiderNetIncome(data);
-    if (persisted != null && persisted > 0) {
-      return persisted;
-    }
-
-    final shippingFee = _readShippingFeeAmount(data);
-    if (shippingFee <= 0) {
-      return 0;
-    }
-    return double.parse((shippingFee * 0.85).toStringAsFixed(1));
+    return readRiderNetShippingIncome(data) ?? 0;
   }
 
   DateTime? _orderDeliveredAt(Map<String, dynamic> data) {
@@ -141,10 +134,7 @@ class _WalletScreenState extends State<WalletScreen> {
         .collection('credits')
         .where('uid', isEqualTo: uid)
         .snapshots();
-    final orderStream = FirebaseFirestore.instance
-        .collection('orders')
-        .where('driverId', isEqualTo: uid)
-        .snapshots();
+    final orderStream = RiderOrdersService.instance.ordersStream;
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: creditStream,
@@ -193,14 +183,23 @@ class _WalletScreenState extends State<WalletScreen> {
               final slipFeedbackId = data['slipFeedbackId']?.toString().trim();
               final isTopUp = amount >= 0;
 
+              final creditType = data['type']?.toString().trim();
+              final orderId = data['orderId']?.toString().trim();
               String title = isTopUp ? 'เติมเครดิต' : 'หักเครดิต';
-              if (provider == 'slipok' && status == 'verified') {
+              if (creditType == 'order_pay_at_destination_hold') {
+                title = 'หักเครดิต (รับงานจ่ายปลายทาง)';
+              } else if (creditType == 'order_pay_at_destination_release') {
+                title = 'คืนเครดิต (ค่าส่งสุทธิ • รับปลายทาง)';
+              } else if (provider == 'slipok' && status == 'verified') {
                 title = 'เติมเครดิต (ตรวจสลิป)';
               } else if (provider != null && provider.isNotEmpty) {
                 title = '$title ($provider)';
               }
 
               final subtitleParts = <String>[];
+              if (orderId != null && orderId.isNotEmpty) {
+                subtitleParts.add('ออเดอร์: $orderId');
+              }
               if (paymentGroupId != null && paymentGroupId.isNotEmpty) {
                 subtitleParts.add('รหัส: $paymentGroupId');
               }
@@ -235,6 +234,24 @@ class _WalletScreenState extends State<WalletScreen> {
 
               final orderCode = data['orderCode']?.toString().trim();
               final deliveredAt = _orderDeliveredAt(data);
+              final isCod = isPayAtDestinationOrder(data);
+              if (isCod) {
+                final collected = resolvePayAtDestinationHoldAmount(data);
+                items.add(
+                  _WalletHistoryItem(
+                    title: 'รายได้ค่าส่งสุทธิ (รับปลายทาง)',
+                    subtitle: orderCode == null || orderCode.isEmpty
+                        ? 'เก็บเงินสด THB ${collected.toStringAsFixed(1)}'
+                        : 'ออเดอร์: $orderCode • เก็บเงินสด THB ${collected.toStringAsFixed(1)}',
+                    amount: netIncome,
+                    happenedAt: deliveredAt,
+                    icon: Icons.payments_outlined,
+                    color: _dashboardOrangeMid,
+                  ),
+                );
+                continue;
+              }
+
               items.add(
                 _WalletHistoryItem(
                   title: 'รายได้ค่าส่งสุทธิ',
@@ -307,7 +324,7 @@ class _WalletScreenState extends State<WalletScreen> {
     }
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance.collection('orders').where('driverId', isEqualTo: uid).snapshots(),
+      stream: RiderOrdersService.instance.ordersStream,
       builder: (context, snapshot) {
         var deliveredTodayCount = 0;
         var netIncomeToday = 0.0;

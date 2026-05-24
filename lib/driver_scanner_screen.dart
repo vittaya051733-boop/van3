@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import 'services/rider_location_pusher.dart';
+import 'utils/order_pay_at_destination.dart';
 
 class DriverScannerScreen extends StatefulWidget {
   const DriverScannerScreen({
@@ -293,17 +294,33 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
     }
 
     final now = Timestamp.now();
-    final deliverySnapshot = _buildDeliveryFinancialSnapshot(
+    final deliverySnapshot = buildDeliveryFinancialSnapshot(
+      orderData: data,
       grossShippingFee: _readShippingFeeAmount(data),
       completedAt: now,
       completedSource: 'location_qr',
     );
 
-    await orderRef.update({
-      'status': 'delivered',
-      'deliveredAt': now,
-      'updatedAt': now,
-      ...deliverySnapshot,
+    await FirebaseFirestore.instance.runTransaction((transaction) async {
+      releasePayAtDestinationHold(
+        transaction: transaction,
+        orderId: widget.orderId,
+        riderUid: user.uid,
+        releaseAmount: isPayAtDestinationOrder(data)
+            ? resolvePayAtDestinationCreditReleaseAmount(
+                data,
+                grossShippingFee: _readShippingFeeAmount(data),
+              )
+            : 0,
+        completedSource: 'location_qr',
+      );
+
+      transaction.update(orderRef, {
+        'status': 'delivered',
+        'deliveredAt': now,
+        'updatedAt': now,
+        ...deliverySnapshot,
+      });
     });
 
     // Push พิกัดตอนส่งสำเร็จ (action)
@@ -463,34 +480,6 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
     }
 
     return 0;
-  }
-
-  Map<String, dynamic> _buildDeliveryFinancialSnapshot({
-    required double grossShippingFee,
-    required Timestamp completedAt,
-    required String completedSource,
-  }) {
-    final safeGross = double.parse(grossShippingFee.toStringAsFixed(1));
-    final platformFee = double.parse((safeGross * 0.15).toStringAsFixed(1));
-    final riderNetIncome = double.parse(
-      (safeGross - platformFee).toStringAsFixed(1),
-    );
-
-    return <String, dynamic>{
-      'deliveryGrossShippingFee': safeGross,
-      'deliveryPlatformFee': platformFee,
-      'deliveryRiderNetIncome': riderNetIncome,
-      'deliveryCompletedSource': completedSource,
-      'deliveryFinancials': <String, dynamic>{
-        'grossShippingFee': safeGross,
-        'platformFee': platformFee,
-        'riderNetIncome': riderNetIncome,
-        'deductionRate': 0.15,
-        'currency': 'THB',
-        'completedAt': completedAt,
-        'completedSource': completedSource,
-      },
-    };
   }
 
   double? _toDouble(Object? value) {

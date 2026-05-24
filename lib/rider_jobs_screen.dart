@@ -13,12 +13,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'services/rider_location_pusher.dart';
+import 'services/rider_orders_service.dart';
 
 import 'driver_scanner_screen.dart';
 import 'rider_chat_room_screen.dart';
 import 'utils/contact_phone_resolver.dart';
-import 'utils/order_call_launcher.dart';
 import 'utils/order_payment_label.dart';
+import 'utils/order_pay_at_destination.dart';
+import 'utils/order_call_launcher.dart';
+import 'utils/upload_image_compressor.dart';
 
 class RiderJobsScreen extends StatefulWidget {
   const RiderJobsScreen({super.key, this.showHistory = false});
@@ -115,10 +118,7 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
         title: Text(widget.showHistory ? 'ประวัติ ออเดอร์' : 'รับงานใหม่'),
       ),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: FirebaseFirestore.instance
-            .collection('orders')
-            .where('driverId', isEqualTo: user.uid)
-            .snapshots(),
+        stream: RiderOrdersService.instance.ordersStream,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting &&
               !snapshot.hasData) {
@@ -327,7 +327,11 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
     final customerUid = _readCustomerUid(data);
     final shopOwnerUid = _readShopOwnerUid(data);
     final destinationCoords = _readDestinationCoordinates(data);
-    final paymentLabel = resolveOrderPaymentLabel(data);
+        final paymentLabel = resolveOrderPaymentLabel(data);
+        final isPayAtDestination = isPayAtDestinationOrder(data);
+        final collectedAmount = isPayAtDestination
+            ? resolvePayAtDestinationHoldAmount(data)
+            : 0.0;
 
     return FutureBuilder<_ResolvedOrderCardData>(
       future: _resolveOrderCardData(
@@ -436,7 +440,15 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                         Text('สถานะ: $status'),
                         Text('วิธีจ่าย: ${paymentLabel ?? '-'}'),
                         Text('ค่าส่ง: THB ${shippingFee.toStringAsFixed(1)}'),
-                        if (showHistory) ...[
+                        if (showHistory && isPayAtDestination) ...[
+                          Text(
+                            'เก็บเงินสด: THB ${collectedAmount.toStringAsFixed(1)}',
+                          ),
+                          Text(
+                            'รายได้ค่าส่งสุทธิ: THB ${riderNetIncome.toStringAsFixed(1)}',
+                          ),
+                          Text('ส่งสำเร็จเมื่อ: ${deliveredAtText ?? '-'}'),
+                        ] else if (showHistory) ...[
                           Text(
                             'รายได้สุทธิไรเดอร์: THB ${riderNetIncome.toStringAsFixed(1)}',
                           ),
@@ -1168,7 +1180,7 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
     final picker = ImagePicker();
     final captured = await picker.pickImage(
       source: ImageSource.camera,
-      imageQuality: 85,
+      imageQuality: 100,
       preferredCameraDevice: CameraDevice.rear,
     );
     if (captured == null) {
@@ -1176,7 +1188,10 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
     }
 
     try {
-      final file = File(captured.path);
+      final compressed = await UploadImageCompressor.compressForUpload(
+        File(captured.path),
+      );
+      final file = compressed.file;
       if (!context.mounted) {
         return;
       }
@@ -1224,15 +1239,19 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
 
       final now = Timestamp.now();
       final grossShippingFee = await _resolveShippingFee(orderData);
-      final deliverySnapshot = _buildDeliveryFinancialSnapshot(
+      final deliverySnapshot = buildDeliveryFinancialSnapshot(
+        orderData: orderData,
         grossShippingFee: grossShippingFee,
         completedAt: now,
         completedSource: 'photo_proof',
       );
       final storagePath =
-          'riders/$currentUid/delivery_proofs/$orderId/${DateTime.now().millisecondsSinceEpoch}_${captured.name}';
+          'riders/$currentUid/delivery_proofs/$orderId/${DateTime.now().millisecondsSinceEpoch}_${compressed.fileName}';
       final storageRef = FirebaseStorage.instance.ref().child(storagePath);
-      await storageRef.putFile(file);
+      await storageRef.putFile(
+        file,
+        SettableMetadata(contentType: compressed.contentType),
+      );
       final proofUrl = await storageRef.getDownloadURL();
       final capturedByName = _readNonEmptyString(
         (currentUser?.displayName ?? '').trim(),
@@ -1240,20 +1259,33 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
         (orderData['riderName'] as String?)?.trim(),
       );
 
-      await FirebaseFirestore.instance
-          .collection('orders')
-          .doc(orderId)
-          .update({
-            'status': 'delivered',
-            'deliveredAt': now,
-            'updatedAt': now,
-            ...deliverySnapshot,
-            'deliveryProofImageUrl': proofUrl,
-            'deliveryProofStoragePath': storagePath,
-            'deliveryProofCapturedAt': now,
-            'deliveryProofCapturedById': currentUid,
-            'deliveryProofCapturedByName': capturedByName,
-          });
+      final orderRef = FirebaseFirestore.instance.collection('orders').doc(orderId);
+      await FirebaseFirestore.instance.runTransaction((transaction) async {
+        releasePayAtDestinationHold(
+          transaction: transaction,
+          orderId: orderId,
+          riderUid: currentUid,
+          releaseAmount: isPayAtDestinationOrder(orderData)
+              ? resolvePayAtDestinationCreditReleaseAmount(
+                  orderData,
+                  grossShippingFee: grossShippingFee,
+                )
+              : 0,
+          completedSource: 'photo_proof',
+        );
+
+        transaction.update(orderRef, {
+          'status': 'delivered',
+          'deliveredAt': now,
+          'updatedAt': now,
+          ...deliverySnapshot,
+          'deliveryProofImageUrl': proofUrl,
+          'deliveryProofStoragePath': storagePath,
+          'deliveryProofCapturedAt': now,
+          'deliveryProofCapturedById': currentUid,
+          'deliveryProofCapturedByName': capturedByName,
+        });
+      });
 
       // Push พิกัดตอนส่งสำเร็จ (action)
       unawaited(
@@ -1396,32 +1428,11 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
     return '$day/$month/$year $hour:$minute';
   }
 
-  Map<String, dynamic> _buildDeliveryFinancialSnapshot({
-    required double grossShippingFee,
-    required Timestamp completedAt,
-    required String completedSource,
-  }) {
-    final safeGross = double.parse(grossShippingFee.toStringAsFixed(1));
-    final platformFee = double.parse((safeGross * 0.15).toStringAsFixed(1));
-    final riderNetIncome = double.parse(
-      (safeGross - platformFee).toStringAsFixed(1),
-    );
-
-    return <String, dynamic>{
-      'deliveryGrossShippingFee': safeGross,
-      'deliveryPlatformFee': platformFee,
-      'deliveryRiderNetIncome': riderNetIncome,
-      'deliveryCompletedSource': completedSource,
-      'deliveryFinancials': <String, dynamic>{
-        'grossShippingFee': safeGross,
-        'platformFee': platformFee,
-        'riderNetIncome': riderNetIncome,
-        'deductionRate': 0.15,
-        'currency': 'THB',
-        'completedAt': completedAt,
-        'completedSource': completedSource,
-      },
-    };
+  double _calculateRiderNetIncomeFromGross(double grossShippingFee) {
+    if (grossShippingFee <= 0) {
+      return 0;
+    }
+    return double.parse((grossShippingFee * 0.85).toStringAsFixed(1));
   }
 
   double? _readStoredGrossShippingFee(Map<String, dynamic> data) {
@@ -1433,18 +1444,7 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
   }
 
   double? _readStoredRiderNetIncome(Map<String, dynamic> data) {
-    return _toDouble(data['deliveryRiderNetIncome']) ??
-        _toDouble(
-          (data['deliveryFinancials']
-              as Map<String, dynamic>?)?['riderNetIncome'],
-        );
-  }
-
-  double _calculateRiderNetIncomeFromGross(double grossShippingFee) {
-    if (grossShippingFee <= 0) {
-      return 0;
-    }
-    return double.parse((grossShippingFee * 0.85).toStringAsFixed(1));
+    return readRiderNetShippingIncome(data);
   }
 
   LocationSettings _buildLocationSettings({

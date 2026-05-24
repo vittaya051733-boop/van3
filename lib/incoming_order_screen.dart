@@ -13,6 +13,7 @@ import 'services/rider_location_pusher.dart';
 import 'utils/contact_phone_resolver.dart';
 import 'utils/order_call_launcher.dart';
 import 'utils/order_payment_label.dart';
+import 'utils/order_pay_at_destination.dart';
 
 enum _InsufficientCreditAction { cancel, topUp, reject }
 
@@ -61,107 +62,6 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
   late final Future<_IncomingOrderViewData> _viewDataFuture = _buildViewData();
   bool _isSubmitting = false;
   bool _isPromptingAccept = false;
-
-  bool _isPayAtDestinationOrder(Map<String, dynamic> orderData) {
-    String? readString(Object? value) {
-      if (value == null) return null;
-      final text = value.toString().trim();
-      return text.isEmpty ? null : text;
-    }
-
-    Map<String, dynamic>? readMap(Object? value) {
-      if (value is Map<String, dynamic>) return value;
-      if (value is Map) {
-        return <String, dynamic>{
-          for (final entry in value.entries) entry.key.toString(): entry.value,
-        };
-      }
-      return null;
-    }
-
-    String? normalizeKey(String? value) => value?.trim().toLowerCase();
-
-    if (orderData['payAtDestination'] == true ||
-        orderData['paymentAtDestination'] == true ||
-        orderData['isCod'] == true ||
-        orderData['cashOnDelivery'] == true) {
-      return true;
-    }
-
-    final paymentMap = readMap(orderData['payment']);
-    final candidates = <String?>[
-      readString(orderData['paymentMethod']),
-      readString(orderData['payMethod']),
-      readString(orderData['paymentType']),
-      readString(orderData['paymentChannel']),
-      paymentMap == null ? null : readString(paymentMap['method']),
-      paymentMap == null ? null : readString(paymentMap['paymentMethod']),
-      paymentMap == null ? null : readString(paymentMap['type']),
-      paymentMap == null ? null : readString(paymentMap['channel']),
-    ].whereType<String>().toList(growable: false);
-
-    String? key;
-    for (final value in candidates) {
-      final normalized = normalizeKey(value);
-      if (normalized != null && normalized.isNotEmpty) {
-        key = normalized;
-        break;
-      }
-    }
-
-    if (key == null) {
-      return false;
-    }
-
-    return key.contains('cash_on_delivery') ||
-        key.contains('cod') ||
-        key.contains('pay_at_destination') ||
-        key.contains('destination');
-  }
-
-  double _resolvePayAtDestinationHoldAmount(Map<String, dynamic> orderData) {
-    double? readDouble(Object? value) {
-      if (value is num) return value.toDouble();
-      if (value is String) return double.tryParse(value);
-      return null;
-    }
-
-    final shippingFee =
-        readDouble(orderData['shippingFee']) ??
-        readDouble(orderData['deliveryFee']) ??
-        readDouble(orderData['deliveryCharge']) ??
-        readDouble(orderData['shipping']) ??
-        0.0;
-
-    final productsSubtotal =
-        readDouble(orderData['subtotal']) ?? readDouble(orderData['totalPrice']);
-
-    final grandTotal = readDouble(orderData['grandTotal']);
-    if (grandTotal != null && grandTotal > 0) {
-      return grandTotal;
-    }
-
-    final total = readDouble(orderData['total']) ?? readDouble(orderData['totalAmount']);
-    if (total != null && total > 0) {
-      if (productsSubtotal != null && productsSubtotal > 0 && shippingFee > 0) {
-        const epsilon = 0.01;
-        final expected = productsSubtotal + shippingFee;
-        if ((total - expected).abs() < epsilon) {
-          return total;
-        }
-        if ((total - productsSubtotal).abs() < epsilon) {
-          return total + shippingFee;
-        }
-      }
-      return total;
-    }
-
-    if (productsSubtotal != null && productsSubtotal > 0) {
-      return productsSubtotal + (shippingFee > 0 ? shippingFee : 0.0);
-    }
-
-    return 0.0;
-  }
 
   Future<double> _fetchCurrentCreditBalance(String uid) async {
     final snapshot = await FirebaseFirestore.instance
@@ -663,13 +563,13 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
       final orderSnap = await orderRef.get();
       final data = orderSnap.data() ?? <String, dynamic>{};
 
-      final isPayAtDestination = _isPayAtDestinationOrder(data);
+      final isPayAtDestination = isPayAtDestinationOrder(data);
       final paymentLabel =
           resolveOrderPaymentLabel(data) ??
           (isPayAtDestination ? 'จ่ายปลายทาง' : '');
 
       if (isPayAtDestination) {
-        final holdAmount = _resolvePayAtDestinationHoldAmount(data);
+        final holdAmount = resolvePayAtDestinationHoldAmount(data);
         if (holdAmount > 0) {
           final currentCredit = await _fetchCurrentCreditBalance(currentUid);
           if (currentCredit < holdAmount) {
@@ -722,8 +622,8 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
           throw StateError('ออเดอร์นี้ถูกจองโดยไรเดอร์คนอื่นแล้ว');
         }
 
-        final needsHold = _isPayAtDestinationOrder(freshData);
-        final holdAmount = needsHold ? _resolvePayAtDestinationHoldAmount(freshData) : 0.0;
+        final needsHold = isPayAtDestinationOrder(freshData);
+        final holdAmount = needsHold ? resolvePayAtDestinationHoldAmount(freshData) : 0.0;
 
         if (needsHold && holdAmount > 0) {
           final creditDocId = 'order_pay_at_destination_${widget.orderId}_$currentUid';

@@ -5,12 +5,13 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'rider_jobs_screen.dart';
 import 'rider_location_permission_screen.dart';
 import 'rider_settings_screen.dart';
 import 'wallet_screen.dart';
+import 'services/rider_orders_service.dart';
+import 'utils/order_pay_at_destination.dart';
 
 bool _isVerifiedSlipOkFunctionCredit(Map<String, dynamic> data) {
   final status = data['status']?.toString().trim().toLowerCase();
@@ -35,14 +36,6 @@ class _HomeScreenState extends State<HomeScreen> {
   static const double _minimumReadyCredit = 500.0;
   static const double _lowCreditWarningCredit = 600.0;
   static const double _healthyCreditTarget = 3000.0;
-  static const String _seenOrderIdsPrefsKey = 'van3_seen_pending_order_ids';
-  static const int _maxPersistedSeenOrderIds = 200;
-  static const Set<String> _eligibleVan2OrderSources = <String>{
-    'cod_confirm_dialog',
-    'travel_cod_confirm_dialog',
-    'promptpay_slip_dialog',
-    'travel_promptpay_slip_dialog',
-  };
 
   bool _isSettingOnline = false;
   bool _isSettingPassengerReady = false;
@@ -58,9 +51,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   bool get _hasAnyReadyMode => _isOnlineReady || _isPassengerReady;
 
-    bool get _hasLoadedCreditBalance => _currentCreditBalance != null;
+  bool get _hasLoadedCreditBalance => _currentCreditBalance != null;
 
-    bool get _hasEnoughCreditToOpenReady =>
+  bool get _hasEnoughCreditToOpenReady =>
       _currentCreditBalance != null &&
       _currentCreditBalance! >= _minimumReadyCredit;
 
@@ -78,11 +71,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return LocationSettings(accuracy: accuracy, distanceFilter: distanceFilter);
   }
-
-  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _newJobSubscription;
-  final Set<String> _seenPendingOrderIds = <String>{};
-  bool _hasPrimedPendingSnapshot = false;
-  DateTime? _newJobListenerStartedAt;
 
   static const List<_DashboardAction> _actions = [
     _DashboardAction(
@@ -143,182 +131,14 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _ensureLocationReadyOnEntry();
     _loadReadyStatuses();
-    unawaited(_initializeNewJobListener());
   }
 
   @override
   void dispose() {
     _positionSubscription?.cancel();
     _locationHeartbeatTimer?.cancel();
-    _newJobSubscription?.cancel();
     _riderDocSubscription?.cancel();
     super.dispose();
-  }
-
-  Future<void> _initializeNewJobListener() async {
-    await _restoreSeenPendingOrderIds();
-    _startNewJobListener();
-  }
-
-  Future<void> _restoreSeenPendingOrderIds() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final storedIds =
-          prefs.getStringList(_seenOrderIdsPrefsKey) ?? const <String>[];
-      _seenPendingOrderIds
-        ..clear()
-        ..addAll(storedIds.where((id) => id.trim().isNotEmpty));
-    } catch (_) {
-      // Keep listener functional even if local persistence is unavailable.
-    }
-  }
-
-  Future<void> _persistSeenPendingOrderIds() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final values = _seenPendingOrderIds.toList(growable: false);
-      final trimmed = values.length <= _maxPersistedSeenOrderIds
-          ? values
-          : values.sublist(values.length - _maxPersistedSeenOrderIds);
-      await prefs.setStringList(_seenOrderIdsPrefsKey, trimmed);
-    } catch (_) {
-      // Ignore persistence failures.
-    }
-  }
-
-  void _startNewJobListener() {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      return;
-    }
-
-    _newJobSubscription?.cancel();
-    _hasPrimedPendingSnapshot = false;
-    _newJobListenerStartedAt = DateTime.now();
-    _newJobSubscription = FirebaseFirestore.instance
-        .collection('orders')
-        .where('driverId', isEqualTo: user.uid)
-        .where('status', isEqualTo: 'pending')
-        .snapshots()
-        .handleError((Object error) {
-          debugPrint('[van3:new-job] stream error: $error');
-        })
-        .listen((snapshot) {
-          if (!_hasPrimedPendingSnapshot) {
-            for (final doc in snapshot.docs) {
-              final data = doc.data();
-              if (_shouldShowOrderToRider(data)) {
-                _seenPendingOrderIds.add(doc.id);
-              }
-            }
-            unawaited(_persistSeenPendingOrderIds());
-            _hasPrimedPendingSnapshot = true;
-            return;
-          }
-
-          for (final change in snapshot.docChanges) {
-            if (change.type != DocumentChangeType.added) {
-              continue;
-            }
-
-            final doc = change.doc;
-            final data = doc.data();
-            if (data == null || !_shouldShowOrderToRider(data)) {
-              continue;
-            }
-            if (!_isFreshNewOrder(data)) {
-              debugPrint(
-                '[van3:new-job] ignore stale order id=${doc.id} code=${data['orderCode']}',
-              );
-              _seenPendingOrderIds.add(doc.id);
-              unawaited(_persistSeenPendingOrderIds());
-              continue;
-            }
-
-            if (_seenPendingOrderIds.add(doc.id)) {
-              unawaited(_persistSeenPendingOrderIds());
-              debugPrint(
-                '[van3:new-job] notify order id=${doc.id} code=${data['orderCode']}',
-              );
-            }
-          }
-        });
-  }
-
-  bool _shouldShowOrderToRider(Map<String, dynamic> data) {
-    final sourceApp = (data['sourceApp'] as String?)?.trim();
-    if (sourceApp != 'van2_customer') {
-      return false;
-    }
-
-    // Block notifications entirely when rider has turned ready toggles off.
-    final orderType = (data['orderType'] as String?)?.trim();
-    final serviceType = (data['serviceType'] as String?)?.trim();
-    final isTravel =
-        orderType == 'travel_passenger' || serviceType == 'travel_passenger';
-    if (isTravel) {
-      if (!_isPassengerReady) return false;
-    } else {
-      if (!_isOnlineReady) return false;
-    }
-
-    final customerConfirmed = data['customerConfirmed'] == true;
-    if (!customerConfirmed) {
-      return false;
-    }
-
-    final riderNotifyReady = data['riderNotifyReady'] == true;
-    if (!riderNotifyReady) {
-      return false;
-    }
-
-    final confirmedAt = _toDateTime(data['customerConfirmedAt']);
-    if (confirmedAt == null) {
-      return false;
-    }
-
-    final audit = data['audit'];
-    if (audit is Map<String, dynamic>) {
-      final createdSource = (audit['createdSource'] as String?)?.trim();
-      if (!_eligibleVan2OrderSources.contains(createdSource)) {
-        return false;
-      }
-    } else {
-      return false;
-    }
-
-    final status = (data['status'] as String?)?.trim();
-    return status == 'pending' || status == 'awaiting_rider';
-  }
-
-  bool _isFreshNewOrder(Map<String, dynamic> data) {
-    final startedAt = _newJobListenerStartedAt;
-    if (startedAt == null) {
-      return true;
-    }
-
-    final orderTime = _latestOrderTime(data);
-    if (orderTime == null) {
-      return false;
-    }
-
-    // Allow a tiny clock skew window between client and server timestamps.
-    return orderTime.isAfter(startedAt.subtract(const Duration(seconds: 3)));
-  }
-
-  DateTime? _latestOrderTime(Map<String, dynamic> data) {
-    final candidates = <DateTime?>[
-      _toDateTime(data['assignedRiderAt']),
-      _toDateTime(data['createdAt']),
-      _toDateTime(data['timestamp']),
-    ].whereType<DateTime>().toList(growable: false);
-
-    if (candidates.isEmpty) {
-      return null;
-    }
-
-    candidates.sort((a, b) => b.compareTo(a));
-    return candidates.first;
   }
 
   DateTime? _toDateTime(Object? value) {
@@ -354,16 +174,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   double _calculateRiderNetShippingIncome(Map<String, dynamic> data) {
-    final persisted = _readPersistedRiderNetIncome(data);
-    if (persisted != null && persisted > 0) {
-      return persisted;
-    }
-
-    final shippingFee = _readShippingFeeAmount(data);
-    if (shippingFee <= 0) {
-      return 0;
-    }
-    return double.parse((shippingFee * 0.85).toStringAsFixed(1));
+    return readRiderNetShippingIncome(data) ?? 0;
   }
 
   double? _readPersistedRiderNetIncome(Map<String, dynamic> data) {
@@ -1232,10 +1043,7 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
             child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-              stream: FirebaseFirestore.instance
-                  .collection('orders')
-                  .where('driverId', isEqualTo: currentUid)
-                  .snapshots(),
+              stream: RiderOrdersService.instance.ordersStream,
               builder: (context, snapshot) {
                 final docs =
                     snapshot.data?.docs ??
@@ -1539,12 +1347,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         const SizedBox(height: 12),
                         StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                          stream: currentUid == null
-                              ? null
-                              : FirebaseFirestore.instance
-                                    .collection('orders')
-                                    .where('driverId', isEqualTo: currentUid)
-                                    .snapshots(),
+                          stream: RiderOrdersService.instance.ordersStream,
                           builder: (context, snapshot) {
                             final docs =
                                 snapshot.data?.docs ??

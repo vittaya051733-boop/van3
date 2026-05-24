@@ -20,6 +20,7 @@ import 'login_screen.dart';
 import 'rider_jobs_screen.dart';
 import 'services/fcm_token_sync_service.dart';
 import 'services/notification_service.dart';
+import 'services/rider_orders_service.dart';
 import 'welcome_screen.dart';
 import 'utils/app_colors.dart';
 import 'firebase_options.dart';
@@ -83,6 +84,7 @@ void main() async {
   await NotificationService().initialize();
   await OverlayAlertService.initialize();
   await FcmTokenSyncService.instance.initialize();
+  RiderOrdersService.instance.initialize();
   await GlobalOrderAlertService.instance.initialize();
   runApp(const Van3RiderApp());
 }
@@ -579,12 +581,9 @@ class GlobalOrderAlertService {
       }
 
       _listenerStartedAt = DateTime.now();
-      _orderSubscription = FirebaseFirestore.instance
-          .collection('orders')
-          .where('driverId', isEqualTo: user.uid)
-          .where('status', isEqualTo: 'pending')
-          .snapshots()
-          .listen(_handleSnapshot);
+      _orderSubscription = RiderOrdersService.instance.ordersStream.listen(
+        _handleSnapshot,
+      );
     });
 
     _initialized = true;
@@ -723,7 +722,8 @@ class GlobalOrderAlertService {
     }
 
     for (final change in snapshot.docChanges) {
-      if (change.type != DocumentChangeType.added) {
+      if (change.type != DocumentChangeType.added &&
+          change.type != DocumentChangeType.modified) {
         continue;
       }
 

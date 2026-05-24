@@ -12,6 +12,7 @@ import 'call_screen.dart';
 import 'models/user_profile.dart';
 import 'services/notification_service.dart';
 import 'utils/contact_phone_resolver.dart';
+import 'utils/upload_image_compressor.dart';
 
 class RiderChatRoomScreen extends StatefulWidget {
   const RiderChatRoomScreen({
@@ -494,13 +495,22 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
     try {
       await _ensureChatDoc();
       final chatRef = FirebaseFirestore.instance.collection('chats').doc(_chatId);
+
+      var uploadFile = file;
+      var uploadFileName = fileName;
+      if (type == 'image') {
+        final compressed = await UploadImageCompressor.compressForUpload(file);
+        uploadFile = compressed.file;
+        uploadFileName = compressed.fileName;
+      }
+
       final storageRef = _storage
           .ref()
-          .child('chat_uploads/$_chatId/${DateTime.now().millisecondsSinceEpoch}_$fileName');
-      await storageRef.putFile(file);
+          .child('chat_uploads/$_chatId/${DateTime.now().millisecondsSinceEpoch}_$uploadFileName');
+      await storageRef.putFile(uploadFile);
       final downloadUrl = await storageRef.getDownloadURL();
-      final fileSize = await file.length();
-      final summaryText = _summaryForType(type, fileName);
+      final fileSize = await uploadFile.length();
+      final summaryText = _summaryForType(type, uploadFileName);
 
       await chatRef.collection('messages').add({
         'senderId': myUid,
@@ -508,7 +518,7 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
         'type': type,
         'text': summaryText,
         'mediaUrl': downloadUrl,
-        'fileName': fileName,
+        'fileName': uploadFileName,
         'fileSize': fileSize,
         if (widget.orderId?.trim().isNotEmpty ?? false) 'orderId': widget.orderId!.trim(),
         'createdAt': FieldValue.serverTimestamp(),
