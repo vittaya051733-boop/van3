@@ -828,9 +828,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _onActionTap(BuildContext context, _DashboardAction action) {
     if (action.title == 'ออเดอร์ใหม่') {
-      Navigator.of(
-        context,
-      ).push(MaterialPageRoute<void>(builder: (_) => const RiderJobsScreen()));
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(builder: (_) => const RiderJobsScreen()),
+      );
       return;
     }
 

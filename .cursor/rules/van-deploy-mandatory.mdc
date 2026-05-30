@@ -1,0 +1,27 @@
+---
+description: MANDATORY — อ่านก่อน deploy Firebase ทุกครั้ง (van3 Rider)
+alwaysApply: true
+---
+
+# ห้าม Deploy โดยไม่อ่านกฎ (van3 — Rider)
+
+**ก่อนรัน deploy ใดๆ** ให้อ่าน:
+1. `..\van2\scripts\DEPLOY_GOVERNANCE.md`
+2. `..\van2\scripts\DEPLOY_RISK_MATRIX.md`
+
+## van3 — deploy ได้แค่ SELF
+
+| ทำได้ | ห้ามเด็ดขาด |
+|-------|------------|
+| `storage`, `hosting` | Firestore default (SHARED) |
+| | Cloud Functions |
+| | `firebase deploy` จาก firebase.json ทั้งก้อน |
+
+van3 ฟัง Firestore real-time (`orders`, `riders`) — deploy SHARED ผิด = หลุดการเชื่อมต่อ
+
+## คำสั่งเดียวที่ถูก
+
+```powershell
+..\van2\scripts\deploy-readiness.ps1 -App van3 -Target storage
+..\van2\scripts\deploy-self.ps1 -App van3 -Target storage -ConfirmDeploy "APPROVE:van3:van-merchant" -FinalAcknowledge "YES I UNDERSTAND"
+```

@@ -16,6 +16,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'forgot_password_screen.dart';
 import 'home_screen.dart';
 import 'incoming_order_screen.dart';
+import 'utils/rider_incoming_order_filter.dart';
 import 'login_screen.dart';
 import 'rider_jobs_screen.dart';
 import 'services/fcm_token_sync_service.dart';
@@ -745,27 +746,7 @@ class GlobalOrderAlertService {
   }
 
   bool _shouldShowOrder(Map<String, dynamic> data) {
-    final sourceApp = (data['sourceApp'] as String?)?.trim();
-    if (sourceApp != 'van2_customer') {
-      return false;
-    }
-    if (data['customerConfirmed'] != true || data['riderNotifyReady'] != true) {
-      return false;
-    }
-    final confirmedAt = _toDateTime(data['customerConfirmedAt']);
-    if (confirmedAt == null) {
-      return false;
-    }
-    final audit = data['audit'];
-    if (audit is! Map<String, dynamic>) {
-      return false;
-    }
-    final createdSource = (audit['createdSource'] as String?)?.trim();
-    if (createdSource != 'cod_confirm_dialog') {
-      return false;
-    }
-    final status = (data['status'] as String?)?.trim();
-    return status == 'pending' || status == 'awaiting_rider';
+    return RiderIncomingOrderFilter.isPendingIncomingOrder(data);
   }
 
   bool _isFreshOrder(Map<String, dynamic> data) {

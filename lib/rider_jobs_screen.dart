@@ -21,6 +21,7 @@ import 'utils/contact_phone_resolver.dart';
 import 'utils/order_payment_label.dart';
 import 'utils/order_pay_at_destination.dart';
 import 'utils/order_call_launcher.dart';
+import 'utils/rider_incoming_order_filter.dart';
 import 'utils/upload_image_compressor.dart';
 
 class RiderJobsScreen extends StatefulWidget {
@@ -35,16 +36,9 @@ class RiderJobsScreen extends StatefulWidget {
 class _RiderJobsScreenState extends State<RiderJobsScreen> {
   static const String _historyExpansionPrefsKey =
       'van3_rider_history_expanded_days';
-  static const Set<String> _eligibleVan2OrderSources = <String>{
-    'cod_confirm_dialog',
-    'travel_cod_confirm_dialog',
-    'promptpay_slip_dialog',
-    'travel_promptpay_slip_dialog',
-  };
+  static const int _maxFreshPositionAgeSeconds = 45;
   final Set<String> _expandedHistoryDayKeys = <String>{};
   bool _historyExpansionLoaded = false;
-
-  static const int _maxFreshPositionAgeSeconds = 45;
   static const List<String> _registrationCollections = <String>[
     'market_registrations',
     'shop_registrations',
@@ -89,6 +83,16 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
     }
   }
 
+  String _formatLoadError(Object? error) {
+    final message = error?.toString() ?? 'unknown error';
+    if (message.contains('permission-denied')) {
+      return 'โหลดงานไม่สำเร็จ: ไม่มีสิทธิ์อ่านออเดอร์จาก Firebase\n'
+          '(permission-denied)\n\n'
+          'ให้ deploy Firestore rules จาก van2 แล้วลองใหม่';
+    }
+    return 'โหลดงานไม่สำเร็จ: $message';
+  }
+
   Future<void> _persistExpandedHistoryDayKeys() async {
     final currentUid = FirebaseAuth.instance.currentUser?.uid;
     if (currentUid == null || currentUid.isEmpty) {
@@ -128,7 +132,10 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
             return Center(
               child: Padding(
                 padding: const EdgeInsets.all(20),
-                child: Text('โหลดงานไม่สำเร็จ: ${snapshot.error}'),
+                child: Text(
+                  _formatLoadError(snapshot.error),
+                  textAlign: TextAlign.center,
+                ),
               ),
             );
           }
@@ -138,43 +145,10 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                       const <QueryDocumentSnapshot<Map<String, dynamic>>>[])
                   .where((doc) {
                     final data = doc.data();
-                    final status = (data['status'] as String?)?.trim() ?? '';
-                    final statusMatched = widget.showHistory
-                        ? status == 'delivered'
-                        : status == 'accepted' ||
-                              status == 'ready' ||
-                              status == 'delivering';
-                    if (!statusMatched) {
-                      return false;
+                    if (widget.showHistory) {
+                      return RiderIncomingOrderFilter.isDeliveredHistoryOrder(data);
                     }
-
-                    final sourceApp = (data['sourceApp'] as String?)?.trim();
-                    if (sourceApp == 'van2_customer') {
-                      final customerConfirmed =
-                          data['customerConfirmed'] == true;
-                      if (!customerConfirmed) {
-                        return false;
-                      }
-
-                      final riderNotifyReady = data['riderNotifyReady'] == true;
-                      if (!riderNotifyReady) {
-                        return false;
-                      }
-
-                      final customerConfirmedAt = data['customerConfirmedAt'];
-                      if (customerConfirmedAt is! Timestamp) {
-                        return false;
-                      }
-
-                      final audit = data['audit'];
-                      if (audit is! Map<String, dynamic>) {
-                        return false;
-                      }
-                      final createdSource = (audit['createdSource'] as String?)
-                          ?.trim();
-                      return _eligibleVan2OrderSources.contains(createdSource);
-                    }
-                    return true;
+                    return RiderIncomingOrderFilter.isActiveAcceptedOrder(data);
                   })
                   .toList();
 
