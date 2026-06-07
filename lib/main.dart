@@ -69,9 +69,12 @@ void main() async {
   try {
     await FirebaseAppCheck.instance
         .activate(
-          androidProvider: kReleaseMode
-              ? AndroidProvider.playIntegrity
-              : AndroidProvider.debug,
+          providerAndroid: kReleaseMode
+              ? const AndroidPlayIntegrityProvider()
+              : const AndroidDebugProvider(),
+          providerApple: kReleaseMode
+              ? const AppleDeviceCheckProvider()
+              : const AppleDebugProvider(),
         )
         .timeout(const Duration(seconds: 5));
     await FirebaseAppCheck.instance.setTokenAutoRefreshEnabled(true);
