@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import 'utils/app_colors.dart';
+import 'admin_contact_screen.dart';
+import 'admin_support_inbox_screen.dart';
+import 'rider_reviews_screen.dart';
+import 'services/admin_support_config.dart';
 
 class RiderSettingsScreen extends StatelessWidget {
   const RiderSettingsScreen({super.key});
@@ -136,6 +140,23 @@ class RiderSettingsScreen extends StatelessWidget {
       ),
       body: ListView(
         children: [
+          _sectionTitle('รีวิว'),
+          ListTile(
+            leading: const Icon(Icons.star_rate_rounded),
+            title: const Text('รีวิวจากลูกค้า'),
+            subtitle: const Text(
+              'อ่านอย่างเดียว — ลูกค้าเป็นผู้ให้คะแนนและแก้ไขรีวิวเอง',
+            ),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const RiderReviewsScreen(),
+                ),
+              );
+            },
+          ),
+          const Divider(height: 1),
           _sectionTitle('ช่วยเหลือ'),
           ListTile(
             leading: const Icon(Icons.help_outline_rounded),
@@ -147,7 +168,31 @@ class RiderSettingsScreen extends StatelessWidget {
             leading: const Icon(Icons.support_agent_rounded),
             title: const Text('ติดต่อแอดมิน'),
             trailing: const Icon(Icons.chevron_right_rounded),
-            onTap: () => _snack(context, 'ติดต่อแอดมิน (กำลังเตรียม)'),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const AdminContactScreen(
+                    config: kVan3AdminSupportConfig,
+                  ),
+                ),
+              );
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.mark_chat_unread_outlined),
+            title: const Text('ข้อความถึงแอดมิน'),
+            subtitle: const Text('ดูคำตอบจากแอดมินและตอบกลับ'),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const AdminSupportInboxScreen(
+                    config: kVan3AdminSupportConfig,
+                    accentColor: Color(0xFF059669),
+                  ),
+                ),
+              );
+            },
           ),
           const Divider(height: 1),
           _sectionTitle('ความปลอดภัย'),
