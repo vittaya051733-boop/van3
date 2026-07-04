@@ -149,16 +149,6 @@ class _HomeScreenState extends State<HomeScreen> {
     return null;
   }
 
-  double? _toDouble(Object? value) {
-    if (value is num) {
-      return value.toDouble();
-    }
-    if (value is String) {
-      return double.tryParse(value.trim());
-    }
-    return null;
-  }
-
   Map<String, dynamic>? _readStringKeyedMap(Object? value) {
     if (value is Map<String, dynamic>) {
       return value;

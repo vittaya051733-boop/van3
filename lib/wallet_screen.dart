@@ -65,32 +65,6 @@ class _WalletScreenState extends State<WalletScreen> {
     return null;
   }
 
-  double _readShippingFeeAmount(Map<String, dynamic> data) {
-    final direct =
-        _toDouble(data['shippingFee']) ??
-        _toDouble(data['deliveryFee']) ??
-        _toDouble(data['deliveryCharge']) ??
-        _toDouble(data['shipping']) ??
-        0;
-    if (direct > 0) {
-      return direct;
-    }
-
-    final subtotal = _toDouble(data['subtotal']) ?? _toDouble(data['totalPrice']) ?? 0;
-    final grandTotal = _toDouble(data['grandTotal']) ?? subtotal;
-    final delta = grandTotal - subtotal;
-    if (delta > 0) {
-      return delta;
-    }
-
-    return 0;
-  }
-
-  double? _readPersistedRiderNetIncome(Map<String, dynamic> data) {
-    final financials = _readStringKeyedMap(data['deliveryFinancials']);
-    return _toDouble(data['deliveryRiderNetIncome']) ?? _toDouble(financials?['riderNetIncome']);
-  }
-
   double _calculateRiderNetShippingIncome(Map<String, dynamic> data) {
     return readRiderNetShippingIncome(data) ?? 0;
   }
