@@ -6,6 +6,8 @@ import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
@@ -25,6 +27,9 @@ object OrderAlertOverlayController {
     private var overlayView: View? = null
     private var windowManager: WindowManager? = null
     private var currentOrderId: String? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var autoDismissRunnable: Runnable? = null
+    private const val AUTO_DISMISS_MS = 60_000L
 
     fun show(
         context: Context,
@@ -163,12 +168,25 @@ object OrderAlertOverlayController {
         overlayView = scrim
         windowManager = wm
         currentOrderId = data.orderId
+        scheduleAutoDismiss()
+    }
+
+    private fun scheduleAutoDismiss() {
+        autoDismissRunnable?.let { mainHandler.removeCallbacks(it) }
+        autoDismissRunnable = Runnable { dismiss() }
+        mainHandler.postDelayed(autoDismissRunnable!!, AUTO_DISMISS_MS)
+    }
+
+    private fun cancelAutoDismiss() {
+        autoDismissRunnable?.let { mainHandler.removeCallbacks(it) }
+        autoDismissRunnable = null
     }
 
     fun dismiss(orderId: String? = null) {
         if (orderId != null && currentOrderId != null && orderId != currentOrderId) {
             return
         }
+        cancelAutoDismiss()
         val view = overlayView ?: return
         val wm = windowManager
         try {

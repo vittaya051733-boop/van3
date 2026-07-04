@@ -1,12 +1,62 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    match /riders/{userId}/{allPaths=**} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+    function signedIn() {
+      return request.auth != null;
     }
 
+    function uid() {
+      return request.auth.uid;
+    }
+
+    function isPrivilegedAdmin() {
+      return signedIn()
+          && ('admin' in request.auth.token)
+          && request.auth.token.admin == true;
+    }
+
+    function ownsSegment(ownerId) {
+      return signedIn() && uid() == ownerId;
+    }
+
+    function chatUploadParticipant(chatId) {
+      return signedIn() && chatId.matches('.*' + uid() + '.*');
+    }
+
+    match /rider_registrations/{ownerId}/{allPaths=**} {
+      allow read: if ownsSegment(ownerId) || isPrivilegedAdmin();
+      allow write: if ownsSegment(ownerId);
+    }
+
+    match /riders/{ownerId}/topups/{allPaths=**} {
+      allow read: if ownsSegment(ownerId) || isPrivilegedAdmin();
+      allow write: if ownsSegment(ownerId);
+    }
+
+    match /riders/{ownerId}/delivery_proofs/{allPaths=**} {
+      allow read: if signedIn();
+      allow write: if ownsSegment(ownerId);
+    }
+
+    match /chat_uploads/{chatId}/{allPaths=**} {
+      allow read: if chatUploadParticipant(chatId) || isPrivilegedAdmin();
+      allow write: if chatUploadParticipant(chatId);
+    }
+
+    match /admin_support_uploads/{requesterUid}/{allPaths=**} {
+      allow read: if ownsSegment(requesterUid) || isPrivilegedAdmin();
+      allow write: if ownsSegment(requesterUid);
+    }
+
+    match /review_uploads/{ownerId}/{allPaths=**} {
+      allow read: if signedIn();
+      allow write: if ownsSegment(ownerId);
+    }
+
+    // Legacy objects (อ่านได้ถ้า login — เขียนไม่ได้)
     match /{allPaths=**} {
-      allow read, write: if false;
+      allow read: if signedIn();
+      allow write: if false;
     }
   }
 }

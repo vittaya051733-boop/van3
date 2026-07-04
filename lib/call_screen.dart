@@ -4,10 +4,12 @@ import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import 'models/user_profile.dart';
+import 'services/agora_call_audio.dart';
 import 'services/notification_service.dart';
 
 class CallScreen extends StatefulWidget {
@@ -51,6 +53,7 @@ class _CallScreenState extends State<CallScreen> {
   bool _incomingAccepted = false;
   bool _acceptingIncoming = false;
   bool _remoteConnected = false;
+  bool _talkPhaseActive = false;
   DateTime? _callStart;
   Timer? _durationTimer;
   Timer? _joinChannelTimer;
@@ -81,7 +84,8 @@ class _CallScreenState extends State<CallScreen> {
   @override
   void initState() {
     super.initState();
-    _videoMuted = widget.isVideo;
+    // วิดีโอคอลเปิดกล้องทันที, โทรเสียงไม่ใช้กล้อง
+    _videoMuted = !widget.isVideo;
     _activeToken = widget.tokenOverride?.trim() ?? '';
     final overrideChannel = widget.channelOverride?.trim();
     _activeChannelId = (overrideChannel != null && overrideChannel.isNotEmpty)
@@ -124,11 +128,11 @@ class _CallScreenState extends State<CallScreen> {
     if (!await _ensurePermissions()) {
       return;
     }
+    _startRingtone('topping-pop-sound-245150.mp3');
     await _initAgora();
     if (!mounted || _fatalError != null) {
       return;
     }
-    _startRingtone('topping-pop-sound-245150.mp3');
   }
 
   Future<bool> _ensurePermissions() async {
@@ -198,7 +202,7 @@ class _CallScreenState extends State<CallScreen> {
               'remoteAgoraUid': remoteUid,
             }));
             _startDurationTicker();
-            _stopRingback();
+            unawaited(_beginTalkPhase());
           },
           onUserOffline: (connection, remoteUid, reason) {
             if (!mounted) return;
@@ -234,27 +238,31 @@ class _CallScreenState extends State<CallScreen> {
               unawaited(_endCall(declined: true));
             }
           },
+          onNetworkQuality: (connection, remoteUid, txQuality, rxQuality) {
+            if (kDebugMode) {
+              debugPrint(
+                '[call] network channel=${connection.channelId} '
+                'remoteUid=$remoteUid tx=$txQuality rx=$rxQuality',
+              );
+            }
+          },
         ),
       );
 
-      if (widget.isVideo) {
-        await engine.enableVideo();
-        if (_videoMuted) {
-          await engine.enableLocalVideo(false);
-          await engine.muteLocalVideoStream(true);
-        }
-      } else {
-        await engine.enableAudio();
+      await AgoraCallAudio.configureCallEngine(
+        engine,
+        isVideo: widget.isVideo,
+      );
+      if (widget.isVideo && _videoMuted) {
+        await engine.enableLocalVideo(false);
+        await engine.muteLocalVideoStream(true);
       }
-
+      await engine.muteLocalAudioStream(true);
       await engine.joinChannel(
         token: _activeToken,
         channelId: _activeChannelId,
         uid: 0,
-        options: ChannelMediaOptions(
-          publishCameraTrack: widget.isVideo && !_videoMuted,
-          publishMicrophoneTrack: true,
-        ),
+        options: AgoraCallAudio.ringingMediaOptions(),
       );
 
       _armJoinChannelTimer();
@@ -362,6 +370,24 @@ class _CallScreenState extends State<CallScreen> {
     }
 
     await docRef.set(data, SetOptions(merge: true));
+  }
+
+  Future<void> _beginTalkPhase() async {
+    final engine = _engine;
+    if (engine == null || _talkPhaseActive) return;
+
+    _stopRingback();
+    await AgoraCallAudio.startTalkPhase(
+      engine,
+      isVideo: widget.isVideo,
+      videoMuted: _videoMuted,
+    );
+    if (!mounted) return;
+    setState(() {
+      _talkPhaseActive = true;
+      _micMuted = false;
+      _speakerOn = widget.isVideo;
+    });
   }
 
   Future<void> _acceptIncomingCall() async {
@@ -501,28 +527,43 @@ class _CallScreenState extends State<CallScreen> {
     });
   }
 
-  void _toggleSpeaker() {
+  Future<void> _toggleSpeaker() async {
     final engine = _engine;
-    if (engine == null) return;
-    engine.setEnableSpeakerphone(!_speakerOn);
-    setState(() => _speakerOn = !_speakerOn);
+    if (engine == null || !_joined) return;
+    final next = !_speakerOn;
+    await engine.setEnableSpeakerphone(next);
+    if (mounted) setState(() => _speakerOn = next);
   }
 
-  void _toggleMute() {
+  Future<void> _toggleMute() async {
     final engine = _engine;
-    if (engine == null) return;
-    engine.muteLocalAudioStream(!_micMuted);
-    setState(() => _micMuted = !_micMuted);
+    if (engine == null || !_joined || !_talkPhaseActive) return;
+    final next = !_micMuted;
+    await engine.muteLocalAudioStream(next);
+    await engine.updateChannelMediaOptions(
+      AgoraCallAudio.talkMediaOptions(
+        isVideo: widget.isVideo,
+        videoMuted: _videoMuted,
+        micMuted: next,
+      ),
+    );
+    if (mounted) setState(() => _micMuted = next);
   }
 
-  void _toggleVideo() {
+  Future<void> _toggleVideo() async {
     final engine = _engine;
-    if (engine == null) return;
+    if (engine == null || !_joined || !_talkPhaseActive) return;
     final nextMuted = !_videoMuted;
-    engine.enableLocalVideo(!nextMuted);
-    engine.muteLocalVideoStream(nextMuted);
-    engine.updateChannelMediaOptions(ChannelMediaOptions(publishCameraTrack: !nextMuted));
-    setState(() => _videoMuted = nextMuted);
+    await engine.enableLocalVideo(!nextMuted);
+    await engine.muteLocalVideoStream(nextMuted);
+    await engine.updateChannelMediaOptions(
+      AgoraCallAudio.talkMediaOptions(
+        isVideo: widget.isVideo,
+        videoMuted: nextMuted,
+        micMuted: _micMuted,
+      ),
+    );
+    if (mounted) setState(() => _videoMuted = nextMuted);
   }
 
   Widget _avatar() {
@@ -832,21 +873,28 @@ class _CallScreenState extends State<CallScreen> {
           icon: _videoMuted ? Icons.videocam_off : Icons.videocam,
           label: _videoMuted ? 'เปิดกล้อง' : 'ปิดกล้อง',
           color: Colors.white24,
-          onTap: _toggleVideo,
+          onTap: () => unawaited(_toggleVideo()),
         ),
-        const SizedBox(width: 24),
+        const SizedBox(width: 16),
+        _CallActionButton(
+          icon: _speakerOn ? Icons.volume_up : Icons.volume_down,
+          label: 'ลำโพง',
+          color: Colors.white24,
+          onTap: () => unawaited(_toggleSpeaker()),
+        ),
+        const SizedBox(width: 16),
         _CallActionButton(
           icon: Icons.call_end,
           label: 'วางสาย',
           color: Colors.redAccent,
           onTap: _endCall,
         ),
-        const SizedBox(width: 24),
+        const SizedBox(width: 16),
         _CallActionButton(
           icon: _micMuted ? Icons.mic_off : Icons.mic,
           label: _micMuted ? 'เปิดไมค์' : 'ปิดไมค์',
           color: Colors.white24,
-          onTap: _toggleMute,
+          onTap: () => unawaited(_toggleMute()),
         ),
       ],
     );
@@ -860,7 +908,7 @@ class _CallScreenState extends State<CallScreen> {
           icon: _speakerOn ? Icons.volume_up : Icons.volume_down,
           label: 'ลำโพง',
           color: Colors.white24,
-          onTap: _toggleSpeaker,
+          onTap: () => unawaited(_toggleSpeaker()),
         ),
         const SizedBox(width: 24),
         _CallActionButton(
@@ -874,7 +922,7 @@ class _CallScreenState extends State<CallScreen> {
           icon: _micMuted ? Icons.mic_off : Icons.mic,
           label: _micMuted ? 'เปิดไมค์' : 'ปิดไมค์',
           color: Colors.white24,
-          onTap: _toggleMute,
+          onTap: () => unawaited(_toggleMute()),
         ),
       ],
     );

@@ -8,9 +8,14 @@ import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'rider_chat_room_screen.dart';
+import 'services/chat_warmup_service.dart';
 import 'wallet_screen.dart';
 import 'services/rider_location_pusher.dart';
+import 'services/rider_app_image_prefetch.dart';
 import 'utils/contact_phone_resolver.dart';
+import 'utils/shop_image_resolver.dart';
+import 'utils/shop_location_resolver.dart';
+import 'widgets/cached_app_image.dart';
 import 'utils/order_call_launcher.dart';
 import 'utils/order_payment_label.dart';
 import 'utils/order_pay_at_destination.dart';
@@ -62,6 +67,13 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
   late final Future<_IncomingOrderViewData> _viewDataFuture = _buildViewData();
   bool _isSubmitting = false;
   bool _isPromptingAccept = false;
+
+  Future<_IncomingOrderViewData> _buildViewData() {
+    return _buildViewDataImpl().timeout(
+      const Duration(seconds: 15),
+      onTimeout: () => _IncomingOrderViewData.empty(widget.initialData),
+    );
+  }
 
   Future<double> _fetchCurrentCreditBalance(String uid) async {
     final snapshot = await FirebaseFirestore.instance
@@ -187,6 +199,21 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                       return const SizedBox(
                         height: 220,
                         child: Center(child: CircularProgressIndicator()),
+                      );
+                    }
+
+                    if (snapshot.hasError) {
+                      return SizedBox(
+                        height: 220,
+                        child: Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Text(
+                              'โหลดรายละเอียดออเดอร์ไม่สำเร็จ\n${snapshot.error}',
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ),
                       );
                     }
 
@@ -398,6 +425,14 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                     onPressed: viewData.customerUid == null
                                         ? null
                                         : () async {
+                                            final myUid =
+                                                FirebaseAuth.instance.currentUser?.uid;
+                                            if (myUid != null) {
+                                              ChatWarmupService.prefetchRoom(
+                                                myUid: myUid,
+                                                peerUid: viewData.customerUid!,
+                                              );
+                                            }
                                             await Navigator.of(context).push(
                                               MaterialPageRoute<void>(
                                                 builder: (_) => RiderChatRoomScreen(
@@ -418,6 +453,14 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                     onPressed: isTravelOrder || viewData.shopOwnerUid == null
                                         ? null
                                         : () async {
+                                            final myUid =
+                                                FirebaseAuth.instance.currentUser?.uid;
+                                            if (myUid != null) {
+                                              ChatWarmupService.prefetchRoom(
+                                                myUid: myUid,
+                                                peerUid: viewData.shopOwnerUid!,
+                                              );
+                                            }
                                             await Navigator.of(context).push(
                                               MaterialPageRoute<void>(
                                                 builder: (_) => RiderChatRoomScreen(
@@ -505,7 +548,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
     );
   }
 
-  Future<_IncomingOrderViewData> _buildViewData() async {
+  Future<_IncomingOrderViewData> _buildViewDataImpl() async {
     final data = widget.initialData;
     final isTravelOrder = _isTravelPassengerOrder(data);
     final shippingFee = await _resolveShippingFee(data);
@@ -522,8 +565,19 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
             ownerUid: shopOwnerUid,
             registrationCollections: _registrationCollections,
           );
-    final riderToShopDistanceKm = await _resolveRiderToShopDistanceKm(data);
+    final riderToShopDistanceKm = await _resolveRiderToShopDistanceKm(
+      data,
+      requestLocationPermission: false,
+    );
     final shopCoords = await _resolveShopCoordinates(data);
+    final shopImageUrl = await ShopImageResolver.resolveForOrder(
+      data,
+      shopOwnerUid: shopOwnerUid,
+    );
+    RiderAppImagePrefetch.scheduleOrderCardImages(
+      data,
+      shopImageUrl: shopImageUrl,
+    );
     return _IncomingOrderViewData(
       orderData: data,
       shippingFee: shippingFee,
@@ -538,8 +592,11 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
         vehicleTypeLabel: _readTravelVehicleLabel(data),
         scheduleLabel: _readTravelScheduleLabel(data),
       shopCoords: shopCoords,
-      shopImageUrl: _readShopImageUrl(data),
-      products: _readProducts(data),
+      shopImageUrl: shopImageUrl,
+      products: _readProducts(
+        data,
+        fallbackShopImageUrl: shopImageUrl ?? ShopImageResolver.readFromOrder(data),
+      ),
       total: (data['grandTotal'] as num?)?.toDouble() ??
           (data['totalPrice'] as num?)?.toDouble() ??
           0,
@@ -839,43 +896,29 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
     return orderType == 'travel_passenger' || serviceType == 'travel_passenger';
   }
 
-  List<_IncomingOrderProduct> _readProducts(Map<String, dynamic> data) {
+  List<_IncomingOrderProduct> _readProducts(
+    Map<String, dynamic> data, {
+    String? fallbackShopImageUrl,
+  }) {
     final rawProducts = ((data['products'] as List?) ?? const <dynamic>[])
         .whereType<Map>()
         .cast<Map<dynamic, dynamic>>()
         .toList(growable: false);
-    final fallbackShopImageUrl = _readShopImageUrl(data);
+    final shopImageFallback =
+        fallbackShopImageUrl ?? ShopImageResolver.readFromOrder(data);
 
     return rawProducts.map((item) {
-      final imageUrl = (item['imageUrl'] ?? item['photoUrl'] ?? item['image'] ?? item['productImage'])
-          ?.toString()
-          .trim();
       return _IncomingOrderProduct(
         name: (item['name'] ?? item['productName'] ?? '-').toString(),
         quantity: int.tryParse((item['quantity'] ?? 0).toString()) ?? 0,
         unitPrice: double.tryParse((item['unitPrice'] ?? item['price'] ?? 0).toString()) ?? 0,
-        imageUrl: imageUrl == null || imageUrl.isEmpty ? fallbackShopImageUrl : imageUrl,
+        imageUrl: ShopImageResolver.readProductImageUrl(
+          item,
+          fallbackShopImageUrl: shopImageFallback,
+        ),
         note: (item['note'] ?? item['specialRequest'] ?? '').toString().trim(),
       );
     }).toList(growable: false);
-  }
-
-  String? _readShopImageUrl(Map<String, dynamic> data) {
-    final direct = _readTrimmedString(data['shopImageUrl']);
-    if (direct != null && direct.isNotEmpty) {
-      return direct;
-    }
-
-    final snapshot = data['shopSnapshot'];
-    if (snapshot is Map) {
-      final imageUrl = (snapshot['shopImageUrl'] ?? snapshot['photoUrl'] ?? snapshot['imageUrl'])
-          ?.toString()
-          .trim();
-      if (imageUrl != null && imageUrl.isNotEmpty) {
-        return imageUrl;
-      }
-    }
-    return null;
   }
 
   Map<String, double>? _readDestinationCoordinates(Map<String, dynamic> data) {
@@ -903,7 +946,10 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
     return <String, double>{'lat': lat, 'lng': lng};
   }
 
-  Future<double?> _resolveRiderToShopDistanceKm(Map<String, dynamic> data) async {
+  Future<double?> _resolveRiderToShopDistanceKm(
+    Map<String, dynamic> data, {
+    bool requestLocationPermission = true,
+  }) async {
     final riderSearch = data['riderSearch'];
     if (riderSearch is Map<String, dynamic>) {
       final matchedDistanceKm = _toDouble(riderSearch['matchedDistanceKm']);
@@ -917,7 +963,10 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
       return null;
     }
 
-    final riderCoords = await _resolveRiderCoordinates(data);
+    final riderCoords = await _resolveRiderCoordinates(
+      data,
+      requestLocationPermission: requestLocationPermission,
+    );
     if (riderCoords == null) {
       return null;
     }
@@ -931,7 +980,10 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
     return meters.isFinite ? meters / 1000 : null;
   }
 
-  Future<Map<String, double>?> _resolveRiderCoordinates(Map<String, dynamic> data) async {
+  Future<Map<String, double>?> _resolveRiderCoordinates(
+    Map<String, dynamic> data, {
+    bool requestLocationPermission = true,
+  }) async {
     final direct = _readCoordinatesFromAny(
       data,
       locationKey: 'riderLocation',
@@ -942,7 +994,9 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
       return direct;
     }
 
-    final livePosition = await _getFreshCurrentPosition();
+    final livePosition = await _getFreshCurrentPosition(
+      requestPermissionIfNeeded: requestLocationPermission,
+    );
     if (livePosition != null) {
       return <String, double>{
         'lat': livePosition.latitude,
@@ -988,42 +1042,10 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
       }
     }
 
-    final direct = _readCoordinatesFromAny(
+    return ShopLocationResolver.resolveForOrder(
       data,
-      locationKey: 'shopLocation',
-      latKey: 'shopLatitude',
-      lngKey: 'shopLongitude',
+      shopOwnerUid: _readShopOwnerUid(data),
     );
-    if (direct != null) {
-      return direct;
-    }
-
-    final ownerUid = _readShopOwnerUid(data);
-    if (ownerUid == null || ownerUid.isEmpty) {
-      return null;
-    }
-
-    for (final collection in _registrationCollections) {
-      try {
-        final doc = await FirebaseFirestore.instance.collection(collection).doc(ownerUid).get();
-        if (!doc.exists) continue;
-        final map = doc.data();
-        if (map == null) continue;
-        final resolved = _readCoordinatesFromAny(
-          map,
-          locationKey: 'shopLocation',
-          latKey: 'shopLatitude',
-          lngKey: 'shopLongitude',
-        );
-        if (resolved != null) {
-          return resolved;
-        }
-      } catch (_) {
-        // Try next collection.
-      }
-    }
-
-    return null;
   }
 
   Map<String, double>? _readCoordinatesFromAny(
@@ -1118,9 +1140,13 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
     return null;
   }
 
-  Future<Position?> _getFreshCurrentPosition() async {
+  Future<Position?> _getFreshCurrentPosition({
+    bool requestPermissionIfNeeded = true,
+  }) async {
     try {
-      final current = await _getCurrentPosition();
+      final current = await _getCurrentPosition(
+        requestPermissionIfNeeded: requestPermissionIfNeeded,
+      );
       if (current != null) {
         return current;
       }
@@ -1144,14 +1170,16 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
     return null;
   }
 
-  Future<Position?> _getCurrentPosition() async {
+  Future<Position?> _getCurrentPosition({
+    bool requestPermissionIfNeeded = true,
+  }) async {
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       return null;
     }
 
     var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
+    if (permission == LocationPermission.denied && requestPermissionIfNeeded) {
       permission = await Geolocator.requestPermission();
     }
 
@@ -1416,19 +1444,19 @@ class _ShopAvatar extends StatelessWidget {
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(16),
-      child: Image.network(
-        uri,
+      child: CachedAppImage(
+        imageUrl: uri,
         width: 56,
         height: 56,
         fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) {
-          return Container(
-            width: 56,
-            height: 56,
-            color: const Color(0xFFFFF1E8),
-            child: const Icon(Icons.storefront_rounded, size: 28, color: Color(0xFFB45309)),
-          );
-        },
+        lightweight: true,
+        borderRadius: BorderRadius.circular(16),
+        errorWidget: Container(
+          width: 56,
+          height: 56,
+          color: const Color(0xFFFFF1E8),
+          child: const Icon(Icons.storefront_rounded, size: 28, color: Color(0xFFB45309)),
+        ),
       ),
     );
   }
@@ -1502,19 +1530,19 @@ class _ProductImage extends StatelessWidget {
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
-      child: Image.network(
-        uri,
+      child: CachedAppImage(
+        imageUrl: uri,
         width: 56,
         height: 56,
         fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) {
-          return Container(
-            width: 56,
-            height: 56,
-            color: const Color(0xFFE5E7EB),
-            child: const Icon(Icons.fastfood_rounded, color: Color(0xFF6B7280)),
-          );
-        },
+        lightweight: true,
+        borderRadius: BorderRadius.circular(12),
+        errorWidget: Container(
+          width: 56,
+          height: 56,
+          color: const Color(0xFFE5E7EB),
+          child: const Icon(Icons.fastfood_rounded, color: Color(0xFF6B7280)),
+        ),
       ),
     );
   }

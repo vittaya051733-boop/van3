@@ -35,7 +35,7 @@ class RiderIncomingOrderFilter {
       return false;
     }
 
-    if (data['customerConfirmedAt'] is! Timestamp) {
+    if (!_hasConfirmedTimestamp(data['customerConfirmedAt'])) {
       return false;
     }
 
@@ -77,5 +77,19 @@ class RiderIncomingOrderFilter {
   static bool _isLegacyPendingOrder(Map<String, dynamic> data) {
     final status = (data['status'] as String?)?.trim() ?? '';
     return pendingStatuses.contains(status);
+  }
+
+  /// Firestore uses [Timestamp]; Cloud Function fallback serializes millis.
+  static bool _hasConfirmedTimestamp(dynamic value) {
+    if (value is Timestamp) {
+      return true;
+    }
+    if (value is int && value > 0) {
+      return true;
+    }
+    if (value is String && value.trim().isNotEmpty) {
+      return DateTime.tryParse(value.trim()) != null;
+    }
+    return false;
   }
 }

@@ -1,7 +1,5 @@
 package com.vanmarket.rider.van3
 
-import android.app.Notification
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
@@ -18,13 +16,29 @@ class VanFirebaseMessagingService : FlutterFirebaseMessagingService() {
 
     override fun onMessageReceived(message: RemoteMessage) {
         val data = message.data
+        Log.i(TAG, "onMessageReceived type=${data["type"]} orderId=${data["orderId"]} foreground=${VanRiderApp.isAppInForeground()}")
         when (data["type"]) {
-            "call" -> showIncomingCallNotification(data)
-            "call_cancel" -> dismissIncomingCall(data)
-            "chat" -> showChatNotificationIfNeeded(data)
-            else -> showOrderNotificationIfNeeded(message)
+            "call" -> {
+                showIncomingCallNotification(data)
+                super.onMessageReceived(message)
+            }
+            "call_cancel" -> {
+                dismissIncomingCall(data)
+                super.onMessageReceived(message)
+            }
+            "chat" -> {
+                showChatNotificationIfNeeded(data)
+                super.onMessageReceived(message)
+            }
+            else -> {
+                if (shouldPresentConfirmedOrderAlert(data)) {
+                    showOrderNotificationIfNeeded(message)
+                    // Native path already posts the urgent full-screen notification.
+                    return
+                }
+                super.onMessageReceived(message)
+            }
         }
-        super.onMessageReceived(message)
     }
 
     override fun onNewToken(token: String) {
@@ -59,10 +73,10 @@ class VanFirebaseMessagingService : FlutterFirebaseMessagingService() {
         )
 
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        ensureChannel(notificationManager)
+        RiderNotificationChannels.ensureAll(this)
         wakeDeviceForIncomingCall()
 
-        val notification = NotificationCompat.Builder(this, CALL_CHANNEL_ID)
+        val notification = NotificationCompat.Builder(this, RiderNotificationChannels.CALL_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.sym_call_incoming)
             .setContentTitle(if (isVideo) "สายวิดีโอคอลเข้า" else "สายเข้าจาก $callerName")
             .setContentText("แตะเพื่อรับสาย")
@@ -129,10 +143,10 @@ class VanFirebaseMessagingService : FlutterFirebaseMessagingService() {
         )
 
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        ensureChatChannel(notificationManager)
+        RiderNotificationChannels.ensureAll(this)
         wakeDevice("incoming_chat", 2000)
 
-        val notification = NotificationCompat.Builder(this, CHAT_CHANNEL_ID)
+        val notification = NotificationCompat.Builder(this, RiderNotificationChannels.CHAT_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.sym_action_chat)
             .setContentTitle(senderName)
             .setContentText(body)
@@ -155,11 +169,11 @@ class VanFirebaseMessagingService : FlutterFirebaseMessagingService() {
             return
         }
 
-        val title = message.notification?.title
-            ?: data["title"]
+        val title = data["title"]
+            ?: message.notification?.title
             ?: "มีออเดอร์ใหม่"
-        val body = message.notification?.body
-            ?: data["body"]
+        val body = data["body"]
+            ?: message.notification?.body
             ?: "แตะเพื่อดูรายละเอียดออเดอร์"
         val orderId = data["orderId"] ?: data["jobId"] ?: return
 
@@ -185,7 +199,8 @@ class VanFirebaseMessagingService : FlutterFirebaseMessagingService() {
         )
 
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        ensureOrderChannel(notificationManager)
+        RiderNotificationChannels.ensureAll(this)
+        wakeDeviceForIncomingOrder()
 
         val notificationId = orderId.hashCode()
         Log.i(
@@ -193,19 +208,7 @@ class VanFirebaseMessagingService : FlutterFirebaseMessagingService() {
             "Presenting incoming order alert orderId=$orderId foreground=${VanRiderApp.isAppInForeground()} title=$title",
         )
 
-        if (!VanRiderApp.isAppInForeground()) {
-            wakeDeviceForIncomingOrder()
-            Log.i(TAG, "App background; attempting wake activity for orderId=$orderId")
-
-            try {
-                Log.i(TAG, "Starting wake activity for orderId=$orderId")
-                startActivity(wakeIntent)
-            } catch (error: Exception) {
-                Log.w(TAG, "Unable to start order UI", error)
-            }
-        }
-
-        val notification = NotificationCompat.Builder(this, ORDER_WAKE_CHANNEL_ID)
+        val notification = NotificationCompat.Builder(this, RiderNotificationChannels.ORDER_WAKE_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle(title)
             .setContentText(body)
@@ -223,7 +226,35 @@ class VanFirebaseMessagingService : FlutterFirebaseMessagingService() {
             .build()
 
         notificationManager.notify(notificationId, notification)
-        Log.i(TAG, "Posted wake notification id=$notificationId channel=$ORDER_WAKE_CHANNEL_ID orderId=$orderId")
+        Log.i(TAG, "Posted wake notification id=$notificationId orderId=$orderId")
+
+        OrderIntentRouter.deliverFromFcm(
+            orderId = orderId,
+            title = title,
+            body = body,
+            appWasForeground = VanRiderApp.isAppInForeground(),
+        )
+        try {
+            startActivity(wakeIntent)
+        } catch (error: Exception) {
+            Log.w(TAG, "Unable to start order UI", error)
+            showOrderAlertOverlay(
+                orderId = orderId,
+                title = title,
+                body = body,
+                openIntent = openIntent,
+            )
+        }
+
+        if (!canUseFullScreenIntent()) {
+            Log.i(TAG, "Full-screen intent unavailable; showing native order overlay orderId=$orderId")
+            showOrderAlertOverlay(
+                orderId = orderId,
+                title = title,
+                body = body,
+                openIntent = openIntent,
+            )
+        }
     }
 
     private fun shouldPresentConfirmedOrderAlert(data: Map<String, String>): Boolean {
@@ -243,60 +274,36 @@ class VanFirebaseMessagingService : FlutterFirebaseMessagingService() {
         return customerConfirmed && riderNotifyReady
     }
 
-    private fun ensureChannel(notificationManager: NotificationManager) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val channel = NotificationChannel(
-            CALL_CHANNEL_ID,
-            "Incoming Calls",
-            NotificationManager.IMPORTANCE_HIGH,
-        ).apply {
-            description = "Full-screen notifications for incoming calls"
-            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-            setBypassDnd(true)
-            enableVibration(true)
-            setSound(
-                RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
-                Notification.AUDIO_ATTRIBUTES_DEFAULT,
-            )
-        }
-        notificationManager.createNotificationChannel(channel)
+    private fun showOrderAlertOverlay(
+        orderId: String,
+        title: String,
+        body: String,
+        openIntent: Intent,
+    ) {
+        OrderAlertOverlayController.show(
+            context = this,
+            data = OrderAlertOverlayData(
+                orderId = orderId,
+                title = title,
+                body = body,
+            ),
+            onOpenOrders = {
+                try {
+                    startActivity(openIntent)
+                } catch (error: Exception) {
+                    Log.w(TAG, "Unable to open order screen from overlay", error)
+                }
+            },
+            onDismiss = {},
+        )
     }
 
-    private fun ensureOrderChannel(notificationManager: NotificationManager) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val channel = NotificationChannel(
-            ORDER_WAKE_CHANNEL_ID,
-            "Order Alerts",
-            NotificationManager.IMPORTANCE_HIGH,
-        ).apply {
-            description = "Urgent incoming order notifications that can wake the screen"
-            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-            setBypassDnd(true)
-            enableVibration(true)
-            setSound(
-                RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
-                Notification.AUDIO_ATTRIBUTES_DEFAULT,
-            )
+    private fun canUseFullScreenIntent(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            return true
         }
-        notificationManager.createNotificationChannel(channel)
-    }
-
-    private fun ensureChatChannel(notificationManager: NotificationManager) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val channel = NotificationChannel(
-            CHAT_CHANNEL_ID,
-            "Chat Messages",
-            NotificationManager.IMPORTANCE_HIGH,
-        ).apply {
-            description = "Lock-screen notifications for new chat messages"
-            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-            enableVibration(true)
-            setSound(
-                RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),
-                Notification.AUDIO_ATTRIBUTES_DEFAULT,
-            )
-        }
-        notificationManager.createNotificationChannel(channel)
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        return notificationManager?.canUseFullScreenIntent() ?: true
     }
 
     private fun wakeDeviceForIncomingCall() {
@@ -344,9 +351,6 @@ class VanFirebaseMessagingService : FlutterFirebaseMessagingService() {
     }
 
     companion object {
-        private const val CALL_CHANNEL_ID = "call_channel"
-        private const val ORDER_WAKE_CHANNEL_ID = "incoming_order_wakeup_v2"
-        private const val CHAT_CHANNEL_ID = "chat_wakeup_channel_v1"
         private const val REQUEST_CODE_INCOMING_CALL = 3182
         private const val REQUEST_CODE_ORDER = 3183
         const val NOTIFICATION_ID_INCOMING_CALL = 2387
@@ -362,9 +366,7 @@ private object MainActivityOrderIntentBuilder {
         body: String,
     ) = Intent(context, MainActivity::class.java).apply {
         action = MainActivity.ACTION_SHOW_INCOMING_ORDER
-        flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-            Intent.FLAG_ACTIVITY_CLEAR_TOP or
-            Intent.FLAG_ACTIVITY_SINGLE_TOP
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         putExtra(MainActivity.EXTRA_ORDER_ID, orderId)
         putExtra(MainActivity.EXTRA_ORDER_TITLE, title)
         putExtra(MainActivity.EXTRA_ORDER_BODY, body)

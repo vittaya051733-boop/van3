@@ -7,6 +7,10 @@
 3. Run `..\van2\scripts\deploy-readiness.ps1 -App van3 -Target <target>`
 4. Deploy ONE target: `..\van2\scripts\deploy-self.ps1 -App van3 -Target <target> ...`
 
+## Before removing production code
+
+See `DEPLOY_GOVERNANCE.md` § **Checkpoint ก่อนลบโค้ด**: report impact and wait for user confirmation before delete + deploy.
+
 ## Never deploy from van3
 
 - Firestore default DB (SHARED — breaks all rider listeners)

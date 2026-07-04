@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'utils/app_colors.dart';
 import 'admin_contact_screen.dart';
 import 'admin_support_inbox_screen.dart';
+import 'privacy_security_screen.dart';
 import 'rider_reviews_screen.dart';
 import 'services/admin_support_config.dart';
 
@@ -152,6 +153,21 @@ class RiderSettingsScreen extends StatelessWidget {
               Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (_) => const RiderReviewsScreen(),
+                ),
+              );
+            },
+          ),
+          const Divider(height: 1),
+          _sectionTitle('ความเป็นส่วนตัว'),
+          ListTile(
+            leading: const Icon(Icons.shield_outlined),
+            title: const Text('ความเป็นส่วนตัวและความปลอดภัย'),
+            subtitle: const Text('ความยินยอม สิทธิข้อมูล และการแจ้งเตือน'),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const PrivacySecurityScreen(),
                 ),
               );
             },

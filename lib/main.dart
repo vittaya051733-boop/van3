@@ -18,9 +18,16 @@ import 'home_screen.dart';
 import 'incoming_order_screen.dart';
 import 'utils/rider_incoming_order_filter.dart';
 import 'login_screen.dart';
+import 'privacy_launch_gate.dart';
+import 'rider_onboarding_gate.dart';
+import 'rider_registration_screen.dart';
 import 'rider_jobs_screen.dart';
+import 'notifications_screen.dart';
 import 'services/fcm_token_sync_service.dart';
 import 'services/notification_service.dart';
+import 'services/observability_service.dart';
+import 'services/privacy_consent_service.dart';
+import 'services/rider_alert_permissions.dart';
 import 'services/rider_orders_service.dart';
 import 'welcome_screen.dart';
 import 'utils/app_colors.dart';
@@ -33,6 +40,11 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   );
   final type = message.data['type']?.toString();
   if (type == 'call' || type == 'call_cancel' || type == 'chat') {
+    return;
+  }
+  final action = message.data['action']?.toString().trim();
+  if (action == 'admin_announcement') {
+    // แถบแจ้งเตือนระบบมาจาก FCM notification payload (pushAppNotification)
     return;
   }
   if (!await OverlayAlertService.shouldDisplayMessage(message)) {
@@ -85,6 +97,9 @@ void main() async {
   }
 
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  try {
+    await ObservabilityService.instance.initialize(appName: 'van3_rider');
+  } catch (_) {}
   await NotificationService().initialize();
   await OverlayAlertService.initialize();
   await FcmTokenSyncService.instance.initialize();
@@ -105,6 +120,13 @@ class OverlayAlertService {
         'Rider Jobs Urgent',
         description: 'Urgent rider job alerts with sound',
         importance: fln.Importance.max,
+      );
+  static const fln.AndroidNotificationChannel _announcementChannel =
+      fln.AndroidNotificationChannel(
+        'rider_announcements',
+        'ประกาศจากแอดมิน',
+        description: 'ประกาศและแจ้งเตือนทั่วไปจากแพลตฟอร์ม',
+        importance: fln.Importance.high,
       );
 
   static Future<void> initialize() async {
@@ -151,6 +173,7 @@ class OverlayAlertService {
           fln.AndroidFlutterLocalNotificationsPlugin
         >();
     await androidPlugin?.createNotificationChannel(_urgentChannel);
+    await androidPlugin?.createNotificationChannel(_announcementChannel);
   }
 
   static Future<void> _requestOverlayPermission() async {
@@ -166,7 +189,16 @@ class OverlayAlertService {
       if (type == 'call' || type == 'call_cancel' || type == 'chat') {
         return;
       }
+      if (_isConfirmedVan2OrderMessage(message.data)) {
+        await GlobalOrderAlertService.instance.handleRemoteOrderAlert(message.data);
+        return;
+      }
       if (!await shouldDisplayMessage(message)) {
+        return;
+      }
+      final action = message.data['action']?.toString().trim();
+      if (action == 'admin_announcement') {
+        await _showAnnouncementAlert(message);
         return;
       }
       await showOverlayFromMessage(message);
@@ -177,7 +209,16 @@ class OverlayAlertService {
       if (type == 'call' || type == 'call_cancel' || type == 'chat') {
         return;
       }
+      if (_isConfirmedVan2OrderMessage(message.data)) {
+        await GlobalOrderAlertService.instance.handleRemoteOrderAlert(message.data);
+        return;
+      }
       if (!await shouldDisplayMessage(message)) {
+        return;
+      }
+      final action = message.data['action']?.toString().trim();
+      if (action == 'admin_announcement') {
+        await _openNotificationsFromTap();
         return;
       }
       await showOverlayFromMessage(message);
@@ -191,11 +232,112 @@ class OverlayAlertService {
       if (type == 'call' || type == 'call_cancel' || type == 'chat') {
         return;
       }
+      if (_isConfirmedVan2OrderMessage(initialMessage.data)) {
+        await GlobalOrderAlertService.instance.handleRemoteOrderAlert(initialMessage.data);
+        return;
+      }
       if (!await shouldDisplayMessage(initialMessage)) {
+        return;
+      }
+      final action = initialMessage.data['action']?.toString().trim();
+      if (action == 'admin_announcement') {
+        await _openNotificationsFromTap();
         return;
       }
       await showOverlayFromMessage(initialMessage);
     }
+  }
+
+  static Future<void> _showAnnouncementAlert(RemoteMessage message) async {
+    final title = message.notification?.title ??
+        message.data['title']?.toString() ??
+        'ประกาศจากแอดมิน';
+    final body = message.notification?.body ??
+        message.data['body']?.toString() ??
+        '';
+
+    await _showAnnouncementLocalNotification(title: title, body: body);
+
+    final navigatorState = Van3RiderApp.navigatorKey.currentState;
+    final context =
+        navigatorState?.overlay?.context ?? Van3RiderApp.navigatorKey.currentContext;
+    if (navigatorState == null || context == null) {
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: SingleChildScrollView(
+          child: Text(body.isNotEmpty ? body : title),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('ปิด'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              unawaited(_openNotificationsFromTap());
+            },
+            child: const Text('ดูทั้งหมด'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static Future<void> _showAnnouncementLocalNotification({
+    required String title,
+    required String body,
+  }) async {
+    try {
+      final id = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      await _localNotifications.show(
+        id,
+        title,
+        body.isNotEmpty ? body : title,
+        fln.NotificationDetails(
+          android: fln.AndroidNotificationDetails(
+            _announcementChannel.id,
+            _announcementChannel.name,
+            channelDescription: _announcementChannel.description,
+            importance: fln.Importance.high,
+            priority: fln.Priority.high,
+            playSound: true,
+            enableVibration: true,
+          ),
+          iOS: const fln.DarwinNotificationDetails(
+            presentAlert: true,
+            presentBadge: true,
+            presentSound: true,
+          ),
+        ),
+        payload: 'admin_announcement',
+      );
+    } catch (_) {
+      // Ignore local notification failures in foreground edge cases.
+    }
+  }
+
+  static Future<void> _openNotificationsFromTap({int retryCount = 30}) async {
+    final navigatorState = Van3RiderApp.navigatorKey.currentState;
+    if (navigatorState == null) {
+      if (retryCount <= 0) {
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      await _openNotificationsFromTap(retryCount: retryCount - 1);
+      return;
+    }
+
+    await navigatorState.push(
+      MaterialPageRoute<void>(
+        builder: (_) => const RiderNotificationsScreen(),
+      ),
+    );
   }
 
   static Future<bool> shouldDisplayMessage(RemoteMessage message) async {
@@ -221,6 +363,10 @@ class OverlayAlertService {
 
     final orderId = _extractOrderId(message.data);
     if (type == 'app_notification' && (orderId == null || orderId.isEmpty)) {
+      final action = message.data['action']?.toString().trim();
+      if (action == 'admin_announcement') {
+        return true;
+      }
       return false;
     }
     if (orderId == null || orderId.isEmpty) {
@@ -555,17 +701,15 @@ class GlobalOrderAlertService {
   static const MethodChannel _orderIntentChannel = MethodChannel('van.rider/order_intents');
   static const String _methodDrainPendingOrderIntents = 'drain_pending_order_intents';
 
-  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _orderSubscription;
   final Set<String> _seenOrderIds = <String>{};
   bool _initialized = false;
-  bool _primed = false;
   bool _isDialogOpen = false;
   bool _orderIntentBridgeAttached = false;
-  DateTime? _listenerStartedAt;
   final Map<String, Map<String, dynamic>> _pendingPlatformOrders =
       <String, Map<String, dynamic>>{};
   Timer? _pendingOrderRetryTimer;
-  static const int _maxPendingPlatformOrderRetries = 8;
+  int _pendingOrderRetryAttempt = 0;
+  static const int _maxPendingPlatformOrderRetries = 24;
 
   Future<void> initialize() async {
     if (_initialized) {
@@ -573,24 +717,52 @@ class GlobalOrderAlertService {
     }
 
     _setupOrderIntentBridge();
-
-    FirebaseAuth.instance.authStateChanges().listen((user) {
-      _orderSubscription?.cancel();
-      _seenOrderIds.clear();
-      _primed = false;
-      _listenerStartedAt = null;
-
-      if (user == null) {
-        return;
-      }
-
-      _listenerStartedAt = DateTime.now();
-      _orderSubscription = RiderOrdersService.instance.ordersStream.listen(
-        _handleSnapshot,
-      );
-    });
-
     _initialized = true;
+  }
+
+  Future<void> handleRemoteOrderAlert(Map<String, dynamic> data) async {
+    final orderId = _extractOrderId(data);
+    if (orderId == null || orderId.isEmpty) {
+      return;
+    }
+
+    await _handleIncomingOrderPayload(<String, dynamic>{
+      'orderId': orderId,
+      'title': data['title']?.toString(),
+      'body': data['body']?.toString(),
+      'appWasForeground': true,
+      'fromRemoteMessage': true,
+    });
+  }
+
+  String? _extractOrderId(Map<String, dynamic> data) {
+    final candidates = <String?>[
+      data['orderId']?.toString(),
+      data['jobId']?.toString(),
+      data['order_id']?.toString(),
+      data['job_id']?.toString(),
+    ];
+    for (final candidate in candidates) {
+      final text = candidate?.trim();
+      if (text != null && text.isNotEmpty) {
+        return text;
+      }
+    }
+    return null;
+  }
+
+  Map<String, dynamic> _fallbackOrderData(String orderId) {
+    return <String, dynamic>{
+      'sourceApp': 'van2_customer',
+      'customerConfirmed': true,
+      'riderNotifyReady': true,
+      'status': 'awaiting_rider',
+      'orderId': orderId,
+    };
+  }
+
+  bool _isPlatformConfirmedOrder(Map<String, dynamic>? payload) {
+    return payload != null && _extractOrderId(payload) != null;
   }
 
   void _setupOrderIntentBridge() {
@@ -631,7 +803,9 @@ class GlobalOrderAlertService {
       return;
     }
 
+    debugPrint('[GlobalOrderAlertService] incoming order intent orderId=$orderId');
     _pendingPlatformOrders[orderId] = payload;
+    _pendingOrderRetryAttempt = 0;
     unawaited(_flushPendingPlatformOrders());
   }
 
@@ -671,8 +845,12 @@ class GlobalOrderAlertService {
 
   void _schedulePendingOrderRetry() {
     _pendingOrderRetryTimer?.cancel();
+    _pendingOrderRetryAttempt += 1;
+    final delayMs = (_pendingOrderRetryAttempt <= 6)
+        ? 350
+        : (_pendingOrderRetryAttempt <= 12 ? 700 : 1200);
     _pendingOrderRetryTimer = Timer(
-      const Duration(milliseconds: 350),
+      Duration(milliseconds: delayMs),
       () => unawaited(_flushPendingPlatformOrders()),
     );
   }
@@ -681,12 +859,53 @@ class GlobalOrderAlertService {
     String orderId, {
     Map<String, dynamic>? payload,
   }) async {
+    if (_seenOrderIds.contains(orderId)) {
+      return true;
+    }
+
     try {
-      final snapshot = await FirebaseFirestore.instance.collection('orders').doc(orderId).get();
+      final snapshot =
+          await FirebaseFirestore.instance.collection('orders').doc(orderId).get();
       final data = snapshot.data();
-      if (data != null && _shouldShowOrder(data)) {
-        _seenOrderIds.add(orderId);
-        return await _showOrderDialog(orderId: orderId, data: data);
+      final platformConfirmed = _isPlatformConfirmedOrder(payload);
+      if (data != null && (_shouldShowOrder(data) || platformConfirmed)) {
+        final shown = await _showOrderDialog(orderId: orderId, data: data);
+        if (shown) {
+          _seenOrderIds.add(orderId);
+          _pendingOrderRetryAttempt = 0;
+          return true;
+        }
+
+        debugPrint(
+          '[GlobalOrderAlertService] navigator not ready for orderId=$orderId; retry scheduled',
+        );
+        _pendingPlatformOrders[orderId] = <String, dynamic>{
+          ...?payload,
+          'orderId': orderId,
+          'retryCount': ((payload?['retryCount'] as int?) ?? 0),
+        };
+        _schedulePendingOrderRetry();
+        return false;
+      }
+
+      if (platformConfirmed) {
+        final shown = await _showOrderDialog(
+          orderId: orderId,
+          data: _fallbackOrderData(orderId),
+        );
+        if (shown) {
+          _seenOrderIds.add(orderId);
+          _pendingOrderRetryAttempt = 0;
+          return true;
+        }
+
+        _pendingPlatformOrders[orderId] = <String, dynamic>{
+          ...?payload,
+          'orderId': orderId,
+          'retryCount': ((payload?['retryCount'] as int?) ?? 0),
+        };
+        _schedulePendingOrderRetry();
+        return false;
       }
     } catch (error) {
       debugPrint('Unable to open incoming order from platform intent: $error');
@@ -714,69 +933,8 @@ class GlobalOrderAlertService {
     return false;
   }
 
-  Future<void> _handleSnapshot(QuerySnapshot<Map<String, dynamic>> snapshot) async {
-    if (!_primed) {
-      for (final doc in snapshot.docs) {
-        if (_shouldShowOrder(doc.data())) {
-          _seenOrderIds.add(doc.id);
-        }
-      }
-      _primed = true;
-      return;
-    }
-
-    for (final change in snapshot.docChanges) {
-      if (change.type != DocumentChangeType.added &&
-          change.type != DocumentChangeType.modified) {
-        continue;
-      }
-
-      final doc = change.doc;
-      final data = doc.data();
-      if (data == null || !_shouldShowOrder(data)) {
-        continue;
-      }
-      if (!_isFreshOrder(data)) {
-        _seenOrderIds.add(doc.id);
-        continue;
-      }
-      if (!_seenOrderIds.add(doc.id)) {
-        continue;
-      }
-
-      await _showOrderDialog(orderId: doc.id, data: data);
-    }
-  }
-
   bool _shouldShowOrder(Map<String, dynamic> data) {
     return RiderIncomingOrderFilter.isPendingIncomingOrder(data);
-  }
-
-  bool _isFreshOrder(Map<String, dynamic> data) {
-    final startedAt = _listenerStartedAt;
-    if (startedAt == null) {
-      return true;
-    }
-    final candidates = <DateTime?>[
-      _toDateTime(data['assignedRiderAt']),
-      _toDateTime(data['createdAt']),
-      _toDateTime(data['timestamp']),
-    ].whereType<DateTime>().toList(growable: false);
-    if (candidates.isEmpty) {
-      return false;
-    }
-    candidates.sort((a, b) => b.compareTo(a));
-    return candidates.first.isAfter(startedAt.subtract(const Duration(seconds: 3)));
-  }
-
-  DateTime? _toDateTime(Object? value) {
-    if (value is Timestamp) {
-      return value.toDate();
-    }
-    if (value is DateTime) {
-      return value;
-    }
-    return null;
   }
 
   Future<bool> _showOrderDialog({
@@ -784,17 +942,21 @@ class GlobalOrderAlertService {
     required Map<String, dynamic> data,
   }) async {
     if (_isDialogOpen) {
+      debugPrint('[GlobalOrderAlertService] dialog already open; queue orderId=$orderId');
       return false;
     }
 
     final navigatorState = Van3RiderApp.navigatorKey.currentState;
     final context = navigatorState?.overlay?.context ?? Van3RiderApp.navigatorKey.currentContext;
     if (navigatorState == null || context == null) {
+      debugPrint('[GlobalOrderAlertService] navigator unavailable for orderId=$orderId');
       return false;
     }
 
     _isDialogOpen = true;
     try {
+      debugPrint('[GlobalOrderAlertService] opening IncomingOrderScreen orderId=$orderId');
+      await RiderAlertPermissions.dismissNativeOrderOverlay();
       await navigatorState.push(
         MaterialPageRoute<void>(
           builder: (_) => IncomingOrderScreen(
@@ -858,8 +1020,16 @@ class Van3RiderApp extends StatelessWidget {
           routes: {
             '/login': (context) => const LoginScreen(),
             '/forgot': (context) => const ForgotPasswordScreen(),
-            '/home': (context) => const HomeScreen(),
+            '/home': (context) => const RiderOnboardingGate(
+              child: PrivacyLaunchGate(
+                app: PrivacyAppKey.van3Rider,
+                child: HomeScreen(),
+              ),
+            ),
             '/welcome': (context) => const WelcomeScreen(),
+            '/register': (context) => const RiderRegistrationScreen(),
+            '/registration-pending': (context) =>
+                const RiderRegistrationPendingScreen(),
           },
           home: _buildHome(snapshot),
         );
@@ -891,7 +1061,14 @@ class Van3RiderApp extends StatelessWidget {
         if (authSnapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(body: Center(child: CircularProgressIndicator()));
         }
-        return authSnapshot.hasData ? const HomeScreen() : const WelcomeScreen();
+        return authSnapshot.hasData
+            ? const RiderOnboardingGate(
+                child: PrivacyLaunchGate(
+                  app: PrivacyAppKey.van3Rider,
+                  child: HomeScreen(),
+                ),
+              )
+            : const WelcomeScreen();
       },
     );
   }

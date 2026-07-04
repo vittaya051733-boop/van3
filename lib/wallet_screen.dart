@@ -34,6 +34,12 @@ class _WalletScreenState extends State<WalletScreen> {
     if (value is DateTime) {
       return value;
     }
+    if (value is int) {
+      return DateTime.fromMillisecondsSinceEpoch(value);
+    }
+    if (value is String) {
+      return DateTime.tryParse(value);
+    }
     return null;
   }
 
@@ -153,7 +159,7 @@ class _WalletScreenState extends State<WalletScreen> {
           );
         }
 
-        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        return StreamBuilder<RiderOrdersQuerySnapshot>(
           stream: orderStream,
           builder: (context, orderSnapshot) {
             if (orderSnapshot.connectionState == ConnectionState.waiting && !orderSnapshot.hasData) {
@@ -220,7 +226,7 @@ class _WalletScreenState extends State<WalletScreen> {
             }
 
             final orderDocs = orderSnapshot.data?.docs ??
-                const <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+                const <RiderOrderDocument>[];
             for (final doc in orderDocs) {
               final data = doc.data();
               final status = data['status']?.toString().trim();
@@ -323,13 +329,13 @@ class _WalletScreenState extends State<WalletScreen> {
       return const SizedBox.shrink();
     }
 
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+    return StreamBuilder<RiderOrdersQuerySnapshot>(
       stream: RiderOrdersService.instance.ordersStream,
       builder: (context, snapshot) {
         var deliveredTodayCount = 0;
         var netIncomeToday = 0.0;
 
-        final docs = snapshot.data?.docs ?? const <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+        final docs = snapshot.data?.docs ?? const <RiderOrderDocument>[];
         for (final doc in docs) {
           final data = doc.data();
           final status = data['status']?.toString().trim();

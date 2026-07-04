@@ -19,6 +19,9 @@ class MainActivity : FlutterActivity() {
 		super.onCreate(savedInstanceState)
 		Log.i(TAG, "onCreate action=${intent?.action}")
 		CallIntentRouter.deliverIntent(intent)
+		if (intent?.action == ACTION_SHOW_INCOMING_ORDER) {
+			OrderAlertOverlayController.dismiss()
+		}
 		OrderIntentRouter.deliverIntent(intent)
 	}
 
@@ -28,6 +31,9 @@ class MainActivity : FlutterActivity() {
 		applyWakeWindowFlags(intent)
 		Log.i(TAG, "onNewIntent action=${intent.action}")
 		CallIntentRouter.deliverIntent(intent)
+		if (intent.action == ACTION_SHOW_INCOMING_ORDER) {
+			OrderAlertOverlayController.dismiss()
+		}
 		OrderIntentRouter.deliverIntent(intent)
 	}
 
@@ -55,6 +61,10 @@ class MainActivity : FlutterActivity() {
 					}
 					METHOD_OPEN_OVERLAY_SETTINGS -> {
 						openOverlaySettings()
+						result.success(null)
+					}
+					METHOD_DISMISS_ORDER_ALERT_OVERLAY -> {
+						OrderAlertOverlayController.dismiss()
 						result.success(null)
 					}
 					else -> result.notImplemented()
@@ -163,6 +173,7 @@ class MainActivity : FlutterActivity() {
 		private const val METHOD_OPEN_FULL_SCREEN_INTENT_SETTINGS = "open_full_screen_intent_settings"
 		private const val METHOD_CAN_DRAW_OVERLAYS = "can_draw_overlays"
 		private const val METHOD_OPEN_OVERLAY_SETTINGS = "open_overlay_settings"
+		private const val METHOD_DISMISS_ORDER_ALERT_OVERLAY = "dismiss_order_alert_overlay"
 		private const val TAG = "MainActivity"
 	}
 }

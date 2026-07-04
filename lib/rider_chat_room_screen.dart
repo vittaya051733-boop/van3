@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -10,6 +11,8 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'call_screen.dart';
 import 'models/user_profile.dart';
+import 'services/chat_warmup_cache.dart';
+import 'services/chat_warmup_service.dart';
 import 'services/notification_service.dart';
 import 'utils/contact_phone_resolver.dart';
 import 'utils/upload_image_compressor.dart';
@@ -31,23 +34,14 @@ class RiderChatRoomScreen extends StatefulWidget {
 }
 
 class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
-  static const List<String> _registrationCollections = <String>[
-    'market_registrations',
-    'shop_registrations',
-    'restaurant_registrations',
-    'pharmacy_registrations',
-    'other_registrations',
-  ];
-
   final TextEditingController _messageController = TextEditingController();
   final ImagePicker _imagePicker = ImagePicker();
   bool _sending = false;
   bool _uploading = false;
   bool _startingCall = false;
-  bool _initializingChat = true;
-  bool _markingAsRead = false;
   String? _initError;
-  bool _resolvingPeerPhone = false;
+  static const int _initialMessageLimit = 50;
+  bool _markingAsRead = false;
   String? _peerPhone;
 
   FirebaseStorage get _storage => FirebaseStorage.instance;
@@ -63,7 +57,12 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
   @override
   void initState() {
     super.initState();
-    _prepareChat();
+    final myUid = _myUid;
+    if (myUid != null && myUid.trim().isNotEmpty) {
+      _peerPhone = ChatWarmupCache.instance.peekPhone(widget.peerUid);
+      ChatWarmupService.prefetchRoom(myUid: myUid, peerUid: widget.peerUid);
+    }
+    unawaited(_prepareChat());
   }
 
   @override
@@ -73,12 +72,6 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
   }
 
   Future<void> _prepareChat() async {
-    if (!mounted) return;
-    setState(() {
-      _initializingChat = true;
-      _initError = null;
-    });
-
     try {
       final myUid = _myUid;
       if (myUid == null || myUid.trim().isEmpty) {
@@ -88,72 +81,19 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
         throw Exception('ไม่สามารถเริ่มแชทกับบัญชีตัวเองได้');
       }
 
-      await _ensureChatDoc();
-      await _markChatAsRead();
-      _peerPhone = await _resolvePeerPhone();
+      unawaited(_ensureChatDoc());
+      unawaited(_markChatAsRead());
+      unawaited(
+        ChatWarmupService.resolvePeerPhone(widget.peerUid).then((phone) {
+          if (!mounted || phone == null) return;
+          setState(() => _peerPhone = phone);
+        }),
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _initError = 'ไม่สามารถเริ่มห้องแชทได้: $e';
       });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _initializingChat = false;
-        });
-      }
-    }
-  }
-
-  Future<String?> _resolvePeerPhone() async {
-    if (_resolvingPeerPhone) {
-      return _peerPhone;
-    }
-
-    _resolvingPeerPhone = true;
-    try {
-      final fromRiders = await _readPhoneFromDoc(
-        collection: 'riders',
-        docId: widget.peerUid,
-      );
-      if (fromRiders != null) {
-        return fromRiders;
-      }
-
-      for (final collection in _registrationCollections) {
-        final phone = await _readPhoneFromDoc(
-          collection: collection,
-          docId: widget.peerUid,
-        );
-        if (phone != null) {
-          return phone;
-        }
-      }
-
-      return null;
-    } finally {
-      _resolvingPeerPhone = false;
-    }
-  }
-
-  Future<String?> _readPhoneFromDoc({
-    required String collection,
-    required String docId,
-  }) async {
-    try {
-      final doc = await FirebaseFirestore.instance.collection(collection).doc(docId).get();
-      if (!doc.exists) {
-        return null;
-      }
-
-      final data = doc.data();
-      if (data == null) {
-        return null;
-      }
-
-      return ContactPhoneResolver.readPhoneFromMap(data);
-    } catch (_) {
-      return null;
     }
   }
 
@@ -610,13 +550,6 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
       );
     }
 
-    if (_initializingChat) {
-      return Scaffold(
-        appBar: _buildAppBar(),
-        body: const Center(child: CircularProgressIndicator()),
-      );
-    }
-
     if (_initError != null) {
       return Scaffold(
         appBar: _buildAppBar(),
@@ -632,7 +565,10 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
                 ),
                 const SizedBox(height: 12),
                 FilledButton.icon(
-                  onPressed: _prepareChat,
+                  onPressed: () {
+                    setState(() => _initError = null);
+                    unawaited(_prepareChat());
+                  },
                   icon: const Icon(Icons.refresh),
                   label: const Text('ลองอีกครั้ง'),
                 ),
@@ -643,42 +579,41 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
       );
     }
 
-    final stream = FirebaseFirestore.instance
-        .collection('chats')
-        .doc(_chatId)
-        .collection('messages')
-        .orderBy('createdAt', descending: true)
-        .snapshots();
+    final stream = ChatWarmupService.watchMessages(
+      _chatId,
+      limit: _initialMessageLimit,
+    );
 
     return Scaffold(
       appBar: _buildAppBar(),
       body: Column(
         children: [
           Expanded(
-            child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            child: StreamBuilder<List<CachedRiderChatMessage>>(
               stream: stream,
               builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+                final messages = snapshot.data ?? const <CachedRiderChatMessage>[];
+                if (snapshot.connectionState == ConnectionState.waiting &&
+                    messages.isEmpty) {
                   return const Center(child: CircularProgressIndicator());
                 }
                 if (snapshot.hasError) {
                   return Center(child: Text('โหลดแชตไม่สำเร็จ: ${snapshot.error}'));
                 }
 
-                final docs = snapshot.data?.docs ?? const <QueryDocumentSnapshot<Map<String, dynamic>>>[];
-                if (docs.isNotEmpty) {
+                if (messages.isNotEmpty) {
                   _markChatAsRead();
                 }
-                if (docs.isEmpty) {
+                if (messages.isEmpty) {
                   return const Center(child: Text('เริ่มสนทนาได้เลย'));
                 }
 
                 return ListView.builder(
                   reverse: true,
                   padding: const EdgeInsets.all(12),
-                  itemCount: docs.length,
+                  itemCount: messages.length,
                   itemBuilder: (context, index) {
-                    final data = docs[index].data();
+                    final data = messages[index].data;
                     final text = (data['text'] as String?)?.trim() ?? '';
                     final senderId = (data['senderId'] as String?) ?? '';
                     final type = (data['type'] as String?)?.trim() ?? 'text';

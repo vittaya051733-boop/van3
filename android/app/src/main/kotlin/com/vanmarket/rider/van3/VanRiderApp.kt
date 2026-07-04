@@ -9,6 +9,7 @@ class VanRiderApp : Application(), Application.ActivityLifecycleCallbacks {
 
     override fun onCreate() {
         super.onCreate()
+        RiderNotificationChannels.ensureAll(this)
         registerActivityLifecycleCallbacks(this)
     }
 

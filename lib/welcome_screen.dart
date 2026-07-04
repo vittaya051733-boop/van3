@@ -41,6 +41,11 @@ class WelcomeScreen extends StatelessWidget {
                 onPressed: () => Navigator.of(context).pushNamed('/login'),
                 child: const Text('เข้าสู่ระบบ'),
               ),
+              const SizedBox(height: 12),
+              OutlinedButton(
+                onPressed: () => Navigator.of(context).pushNamed('/register'),
+                child: const Text('สมัครไรเดอร์'),
+              ),
             ],
           ),
         ),

@@ -12,12 +12,17 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'services/rider_app_image_prefetch.dart';
 import 'services/rider_location_pusher.dart';
 import 'services/rider_orders_service.dart';
 
 import 'driver_scanner_screen.dart';
 import 'rider_chat_room_screen.dart';
+import 'services/chat_warmup_service.dart';
 import 'utils/contact_phone_resolver.dart';
+import 'utils/shop_image_resolver.dart';
+import 'utils/shop_location_resolver.dart';
+import 'widgets/cached_app_image.dart';
 import 'utils/order_payment_label.dart';
 import 'utils/order_pay_at_destination.dart';
 import 'utils/order_call_launcher.dart';
@@ -121,28 +126,45 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
       appBar: AppBar(
         title: Text(widget.showHistory ? 'ประวัติ ออเดอร์' : 'รับงานใหม่'),
       ),
-      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      body: RefreshIndicator(
+        onRefresh: RiderOrdersService.instance.refresh,
+        child: StreamBuilder<RiderOrdersQuerySnapshot>(
         stream: RiderOrdersService.instance.ordersStream,
+        initialData: RiderOrdersQuerySnapshot.empty,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting &&
-              !snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
+              !snapshot.hasData &&
+              !snapshot.hasError) {
+            return ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: const [
+                SizedBox(height: 180),
+                Center(child: CircularProgressIndicator()),
+              ],
+            );
           }
           if (snapshot.hasError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Text(
+            return ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(20),
+              children: [
+                Text(
                   _formatLoadError(snapshot.error),
                   textAlign: TextAlign.center,
                 ),
-              ),
+                const SizedBox(height: 16),
+                Center(
+                  child: FilledButton(
+                    onPressed: () => RiderOrdersService.instance.refresh(),
+                    child: const Text('ลองโหลดใหม่'),
+                  ),
+                ),
+              ],
             );
           }
 
           final docs =
-              (snapshot.data?.docs ??
-                      const <QueryDocumentSnapshot<Map<String, dynamic>>>[])
+              (snapshot.data?.docs ?? const <RiderOrderDocument>[])
                   .where((doc) {
                     final data = doc.data();
                     if (widget.showHistory) {
@@ -162,12 +184,18 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
           }
 
           if (docs.isEmpty) {
-            return Center(
-              child: Text(
-                widget.showHistory
-                    ? 'ยังไม่มีประวัติออเดอร์ที่ส่งสำเร็จ'
-                    : 'ยังไม่มีงานที่รับแล้วในตอนนี้',
-              ),
+            return ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: [
+                SizedBox(height: MediaQuery.sizeOf(context).height * 0.25),
+                Center(
+                  child: Text(
+                    widget.showHistory
+                        ? 'ยังไม่มีประวัติออเดอร์ที่ส่งสำเร็จ'
+                        : 'ยังไม่มีงานที่รับแล้วในตอนนี้',
+                  ),
+                ),
+              ],
             );
           }
 
@@ -176,6 +204,7 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
           }
 
           return ListView.separated(
+            physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.all(12),
             itemCount: docs.length,
             separatorBuilder: (_, __) => const SizedBox(height: 10),
@@ -185,13 +214,14 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
             },
           );
         },
+        ),
       ),
     );
   }
 
   Widget _buildHistorySections(
     BuildContext context,
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+    List<RiderOrderDocument> docs,
   ) {
     final groupedDocs = _groupDocsByHistoryDay(docs);
     final summaries = _buildHistoryDailySummaries(docs);
@@ -207,7 +237,7 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
         final summary = summaries[dayKey];
         final dayDocs =
             groupedDocs[dayKey] ??
-            const <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+            const <RiderOrderDocument>[];
 
         return Container(
           decoration: BoxDecoration(
@@ -258,12 +288,12 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
     );
   }
 
-  Map<String, List<QueryDocumentSnapshot<Map<String, dynamic>>>>
+  Map<String, List<RiderOrderDocument>>
   _groupDocsByHistoryDay(
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+    List<RiderOrderDocument> docs,
   ) {
     final grouped =
-        <String, List<QueryDocumentSnapshot<Map<String, dynamic>>>>{};
+        <String, List<RiderOrderDocument>>{};
     for (final doc in docs) {
       final dayKey = _historyDayKey(doc.data()['deliveredAt']);
       if (dayKey == null) {
@@ -272,7 +302,7 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
       grouped
           .putIfAbsent(
             dayKey,
-            () => <QueryDocumentSnapshot<Map<String, dynamic>>>[],
+            () => <RiderOrderDocument>[],
           )
           .add(doc);
     }
@@ -281,7 +311,7 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
 
   Widget _buildOrderCard(
     BuildContext context,
-    QueryDocumentSnapshot<Map<String, dynamic>> doc, {
+    RiderOrderDocument doc, {
     required bool showHistory,
   }) {
     final data = doc.data();
@@ -665,6 +695,10 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
       data,
       ownerUid: shopOwnerUid,
     );
+    RiderAppImagePrefetch.scheduleOrderCardImages(
+      data,
+      shopImageUrl: shopImageUrl,
+    );
 
     return _ResolvedOrderCardData(
       customerPhone: customerPhone,
@@ -736,90 +770,11 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
     return null;
   }
 
-  String? _readShopImageUrl(Map<String, dynamic> data) {
-    final direct = (data['shopImageUrl'] as String?)?.trim();
-    if (direct != null && direct.isNotEmpty) {
-      return direct;
-    }
-
-    final shopSnapshot = data['shopSnapshot'];
-    if (shopSnapshot is Map) {
-      final imageUrl =
-          (shopSnapshot['shopImageUrl'] ??
-                  shopSnapshot['photoUrl'] ??
-                  shopSnapshot['imageUrl'])
-              ?.toString()
-              .trim();
-      if (imageUrl != null && imageUrl.isNotEmpty) {
-        return imageUrl;
-      }
-    }
-
-    return null;
-  }
-
   Future<String?> _resolveShopImageUrl(
     Map<String, dynamic> data, {
     required String? ownerUid,
-  }) async {
-    final direct = _readShopImageUrl(data);
-    if (direct != null && direct.isNotEmpty) {
-      return direct;
-    }
-
-    final productImage = _readShopImageFromProducts(data);
-    if (productImage != null && productImage.isNotEmpty) {
-      return productImage;
-    }
-
-    if (ownerUid == null || ownerUid.isEmpty) {
-      return null;
-    }
-
-    for (final collection in _registrationCollections) {
-      try {
-        final doc = await FirebaseFirestore.instance
-            .collection(collection)
-            .doc(ownerUid)
-            .get();
-        if (!doc.exists) continue;
-        final map = doc.data();
-        if (map == null) continue;
-        final resolved =
-            (map['shopImageUrl'] ??
-                    map['photoUrl'] ??
-                    map['imageUrl'] ??
-                    map['storeImageUrl'] ??
-                    map['logoUrl'])
-                ?.toString()
-                .trim();
-        if (resolved != null && resolved.isNotEmpty) {
-          return resolved;
-        }
-      } catch (_) {
-        // Try next collection.
-      }
-    }
-
-    return null;
-  }
-
-  String? _readShopImageFromProducts(Map<String, dynamic> data) {
-    final rawProducts = (data['products'] as List?) ?? const <dynamic>[];
-    for (final item in rawProducts.whereType<Map>()) {
-      final resolved =
-          (item['shopImageUrl'] ??
-                  item['storeImageUrl'] ??
-                  item['shopPhotoUrl'] ??
-                  item['merchantImageUrl'] ??
-                  item['businessImageUrl'])
-              ?.toString()
-              .trim();
-      if (resolved != null && resolved.isNotEmpty) {
-        return resolved;
-      }
-    }
-    return null;
+  }) {
+    return ShopImageResolver.resolveForOrder(data, shopOwnerUid: ownerUid);
   }
 
   Future<double?> _resolveRiderToShopDistanceKm(
@@ -901,46 +856,11 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
 
   Future<Map<String, double>?> _resolveShopCoordinates(
     Map<String, dynamic> data,
-  ) async {
-    final direct = _readCoordinatesFromAny(
+  ) {
+    return ShopLocationResolver.resolveForOrder(
       data,
-      locationKey: 'shopLocation',
-      latKey: 'shopLatitude',
-      lngKey: 'shopLongitude',
+      shopOwnerUid: _readShopOwnerUid(data),
     );
-    if (direct != null) {
-      return direct;
-    }
-
-    final ownerUid = _readShopOwnerUid(data);
-    if (ownerUid == null || ownerUid.isEmpty) {
-      return null;
-    }
-
-    for (final collection in _registrationCollections) {
-      try {
-        final doc = await FirebaseFirestore.instance
-            .collection(collection)
-            .doc(ownerUid)
-            .get();
-        if (!doc.exists) continue;
-        final map = doc.data();
-        if (map == null) continue;
-        final resolved = _readCoordinatesFromAny(
-          map,
-          locationKey: 'shopLocation',
-          latKey: 'shopLatitude',
-          lngKey: 'shopLongitude',
-        );
-        if (resolved != null) {
-          return resolved;
-        }
-      } catch (_) {
-        // Try next collection.
-      }
-    }
-
-    return null;
   }
 
   Map<String, double>? _readCoordinatesFromAny(
@@ -1303,7 +1223,7 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
   }
 
   Map<String, _HistoryDaySummary> _buildHistoryDailySummaries(
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+    List<RiderOrderDocument> docs,
   ) {
     final summaries = <String, _HistoryDaySummary>{};
     for (final doc in docs) {
@@ -1386,6 +1306,9 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
     if (value is int) {
       return DateTime.fromMillisecondsSinceEpoch(value);
     }
+    if (value is String) {
+      return DateTime.tryParse(value);
+    }
     return null;
   }
 
@@ -1450,18 +1373,10 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
     Map<dynamic, dynamic> item, {
     String? fallbackShopImageUrl,
   }) {
-    final direct =
-        (item['imageUrl'] ??
-                item['photoUrl'] ??
-                item['image'] ??
-                item['productImage'])
-            ?.toString()
-            .trim();
-    if (direct != null && direct.isNotEmpty) {
-      return direct;
-    }
-    final fallback = fallbackShopImageUrl?.trim();
-    return fallback == null || fallback.isEmpty ? null : fallback;
+    return ShopImageResolver.readProductImageUrl(
+      item,
+      fallbackShopImageUrl: fallbackShopImageUrl,
+    );
   }
 }
 
@@ -1557,23 +1472,23 @@ class _ShopAvatar extends StatelessWidget {
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(16),
-      child: Image.network(
-        uri,
+      child: CachedAppImage(
+        imageUrl: uri,
         width: 56,
         height: 56,
         fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) {
-          return Container(
-            width: 56,
-            height: 56,
-            color: const Color(0xFFFFF1E8),
-            child: const Icon(
-              Icons.storefront_rounded,
-              size: 28,
-              color: Color(0xFFB45309),
-            ),
-          );
-        },
+        lightweight: true,
+        borderRadius: BorderRadius.circular(16),
+        errorWidget: Container(
+          width: 56,
+          height: 56,
+          color: const Color(0xFFFFF1E8),
+          child: const Icon(
+            Icons.storefront_rounded,
+            size: 28,
+            color: Color(0xFFB45309),
+          ),
+        ),
       ),
     );
   }
@@ -1643,22 +1558,22 @@ class _OrderProductImage extends StatelessWidget {
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(14),
-      child: Image.network(
-        uri,
+      child: CachedAppImage(
+        imageUrl: uri,
         width: 56,
         height: 56,
         fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) {
-          return Container(
-            width: 56,
-            height: 56,
-            color: const Color(0xFFE5E7EB),
-            child: const Icon(
-              Icons.inventory_2_rounded,
-              color: Color(0xFF6B7280),
-            ),
-          );
-        },
+        lightweight: true,
+        borderRadius: BorderRadius.circular(14),
+        errorWidget: Container(
+          width: 56,
+          height: 56,
+          color: const Color(0xFFE5E7EB),
+          child: const Icon(
+            Icons.inventory_2_rounded,
+            color: Color(0xFF6B7280),
+          ),
+        ),
       ),
     );
   }
@@ -1705,6 +1620,10 @@ class _PeerChatButton extends StatelessWidget {
     }
 
     final chatId = _chatIdFor(currentUid, resolvedPeerUid);
+    ChatWarmupService.prefetchRoom(
+      myUid: currentUid,
+      peerUid: resolvedPeerUid,
+    );
     return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
       stream: FirebaseFirestore.instance
           .collection('chats')

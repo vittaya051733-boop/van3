@@ -8,6 +8,8 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'services/fcm_token_sync_service.dart';
+import 'services/notification_service.dart';
+import 'services/privacy_consent_service.dart';
 import 'utils/app_colors.dart';
 import 'utils/phone_login_helper.dart';
 
@@ -36,6 +38,28 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _isPasswordVisible = false;
   bool _isPasswordSaved = false;
   String? _socialLoadingKey;
+
+  Future<void> _finishLogin() async {
+    final consentOk = await PrivacyConsentService.instance.ensureConsent(
+      context,
+      app: PrivacyAppKey.van3Rider,
+      source: 'login_gate',
+    );
+    if (!consentOk || !mounted) {
+      return;
+    }
+
+    final local = await PrivacyConsentService.instance.loadLocalSnapshot();
+    if (local?.pushOptIn == true) {
+      await NotificationService().enablePushNotifications();
+      await FcmTokenSyncService.instance.syncNow();
+    }
+
+    if (!mounted) {
+      return;
+    }
+    Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+  }
 
   Future<void> _upsertRiderLoginUser(User user, {String? phoneInput}) async {
     final now = FieldValue.serverTimestamp();
@@ -109,10 +133,9 @@ class _LoginScreenState extends State<LoginScreen> {
             credential.user!,
             phoneInput: normalizedPhone,
           );
-          await FcmTokenSyncService.instance.syncNow();
           if (!mounted) return;
           setState(() => _isLoading = false);
-          Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+          await _finishLogin();
           return;
         }
 
@@ -139,11 +162,10 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       await _upsertRiderLoginUser(userCredential.user!);
-      await FcmTokenSyncService.instance.syncNow();
 
       if (!mounted) return;
       setState(() => _isLoading = false);
-      Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+      await _finishLogin();
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
       String message = 'ไม่สามารถเข้าสู่ระบบได้';
@@ -197,10 +219,10 @@ class _LoginScreenState extends State<LoginScreen> {
         throw FirebaseAuthException(code: 'user-not-found', message: 'ไม่พบข้อมูลผู้ใช้หลังเข้าสู่ระบบ');
       }
       await _upsertRiderLoginUser(userCredential.user!);
-      await FcmTokenSyncService.instance.syncNow();
 
       if (!mounted) return;
-      Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+      setState(() => _isSocialLoading = false);
+      await _finishLogin();
     } on GoogleSignInException catch (e) {
       if (e.code != GoogleSignInExceptionCode.canceled) {
         _showSnack('ไม่สามารถเข้าสู่ระบบด้วย Google ได้ (${e.code.name})');

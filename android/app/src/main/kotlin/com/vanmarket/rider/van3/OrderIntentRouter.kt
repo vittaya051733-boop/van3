@@ -34,8 +34,34 @@ object OrderIntentRouter {
         }
     }
 
+    fun isFlutterReady(): Boolean = flutterReady && channel != null
+
+    fun deliverFromFcm(
+        orderId: String,
+        title: String?,
+        body: String?,
+        appWasForeground: Boolean,
+    ) {
+        val normalizedOrderId = orderId.trim()
+        if (normalizedOrderId.isEmpty()) {
+            return
+        }
+        deliverPayload(
+            mapOf(
+                "orderId" to normalizedOrderId,
+                "title" to title,
+                "body" to body,
+                "appWasForeground" to appWasForeground,
+            ),
+        )
+    }
+
     fun deliverIntent(intent: Intent?) {
         val payload = extractPayload(intent) ?: return
+        deliverPayload(payload)
+    }
+
+    private fun deliverPayload(payload: Map<String, Any?>) {
         val methodChannel = channel
         if (methodChannel == null || !flutterReady) {
             pendingPayloads.add(payload)

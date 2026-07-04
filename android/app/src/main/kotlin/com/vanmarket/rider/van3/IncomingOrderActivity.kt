@@ -5,11 +5,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
-import android.view.Gravity
 import android.view.WindowManager
-import android.widget.LinearLayout
-import android.widget.ProgressBar
-import android.widget.TextView
 
 class IncomingOrderActivity : Activity() {
     private var orderId: String = ""
@@ -24,7 +20,6 @@ class IncomingOrderActivity : Activity() {
             finish()
             return
         }
-        setContentView(buildContentView())
         openFlutterOrderScreen()
     }
 
@@ -37,6 +32,7 @@ class IncomingOrderActivity : Activity() {
             finish()
             return
         }
+        hasForwarded = false
         openFlutterOrderScreen()
     }
 
@@ -53,51 +49,18 @@ class IncomingOrderActivity : Activity() {
     }
 
     private fun openFlutterOrderScreen() {
-        if (hasForwarded) {
+        if (hasForwarded || orderId.isEmpty()) {
             return
         }
         hasForwarded = true
         Log.i(TAG, "Forwarding to MainActivity orderId=$orderId")
         val launchIntent = Intent(this, MainActivity::class.java).apply {
             action = MainActivity.ACTION_SHOW_INCOMING_ORDER
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                Intent.FLAG_ACTIVITY_SINGLE_TOP
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtras(intent)
         }
         startActivity(launchIntent)
         finish()
-    }
-
-    private fun buildContentView(): LinearLayout {
-        val title = intent.getStringExtra(MainActivity.EXTRA_ORDER_TITLE).orEmpty().ifBlank { "มีออเดอร์ใหม่" }
-        val body = intent.getStringExtra(MainActivity.EXTRA_ORDER_BODY).orEmpty().ifBlank { "กำลังเปิดหน้ารับงาน" }
-
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setBackgroundColor(0xFFF5F7FF.toInt())
-            setPadding(dp(24), dp(32), dp(24), dp(32))
-
-            addView(ProgressBar(context).apply {
-                isIndeterminate = true
-            })
-
-            addView(TextView(context).apply {
-                text = title
-                setTextColor(0xFF111827.toInt())
-                textSize = 28f
-                gravity = Gravity.CENTER
-                setPadding(0, dp(24), 0, dp(12))
-            })
-
-            addView(TextView(context).apply {
-                text = body
-                setTextColor(0xFF4B5563.toInt())
-                textSize = 18f
-                gravity = Gravity.CENTER
-            })
-        }
     }
 
     private fun applyWakeWindowFlags() {
@@ -114,10 +77,6 @@ class IncomingOrderActivity : Activity() {
                     WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
             )
         }
-    }
-
-    private fun dp(value: Int): Int {
-        return (value * resources.displayMetrics.density).toInt()
     }
 
     companion object {

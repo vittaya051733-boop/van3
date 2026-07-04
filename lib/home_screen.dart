@@ -6,11 +6,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 
+import 'notifications_screen.dart';
 import 'rider_jobs_screen.dart';
 import 'rider_settings_screen.dart';
 import 'wallet_screen.dart';
 import 'services/rider_orders_service.dart';
 import 'utils/order_pay_at_destination.dart';
+import 'widgets/rider_alert_permission_banner.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -21,6 +23,8 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   static const int _maxFreshPositionAgeSeconds = 45;
+  /// Keep rider docs fresh for van2 checkout (RIDER_FRESH_LOCATION_MINUTES = 10).
+  static const Duration _locationHeartbeatInterval = Duration(minutes: 3);
   static const double _minimumReadyCredit = 500.0;
   static const double _lowCreditWarningCredit = 600.0;
   static const double _healthyCreditTarget = 3000.0;
@@ -136,6 +140,12 @@ class _HomeScreenState extends State<HomeScreen> {
     if (value is DateTime) {
       return value;
     }
+    if (value is int) {
+      return DateTime.fromMillisecondsSinceEpoch(value);
+    }
+    if (value is String) {
+      return DateTime.tryParse(value);
+    }
     return null;
   }
 
@@ -181,7 +191,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   List<_IncomeDaySummary> _buildLast7DayIncomeSummaries(
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+    List<RiderOrderDocument> docs,
   ) {
     final summaries = <String, _IncomeDaySummary>{};
 
@@ -549,11 +559,23 @@ class _HomeScreenState extends State<HomeScreen> {
     _positionSubscription = null;
     _locationHeartbeatTimer = null;
 
-    // ลดการอัพเดทพิกัดให้เหลือแค่ตอนจำเป็น:
-    //   - ครั้งแรกตอน toggle online (ที่นี่)
-    //   - ตอน action ของออเดอร์ (accept/pickup/start delivering/deliver)
-    // ไม่มี position stream / heartbeat แบบเดิมอีกต่อไป
+    // Push once immediately, then heartbeat so van2 checkout sees fresh coords.
     await _pushCurrentLocationTick(uid, source: 'initial');
+
+    _locationHeartbeatTimer?.cancel();
+    _locationHeartbeatTimer = Timer.periodic(
+      _locationHeartbeatInterval,
+      (_) {
+        if (!mounted || !_hasAnyReadyMode) {
+          return;
+        }
+        final activeUid = FirebaseAuth.instance.currentUser?.uid;
+        if (activeUid == null || activeUid.isEmpty) {
+          return;
+        }
+        unawaited(_pushCurrentLocationTick(activeUid, source: 'heartbeat'));
+      },
+    );
   }
 
   Future<void> _stopRealtimeLocationUpdates() async {
@@ -855,6 +877,15 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
+    if (action.title == 'การแจ้งเตือน') {
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => const RiderNotificationsScreen(),
+        ),
+      );
+      return;
+    }
+
     if (action.title == 'ตั้งค่า') {
       Navigator.of(context).push(
         MaterialPageRoute<void>(builder: (_) => const RiderSettingsScreen()),
@@ -1002,12 +1033,11 @@ class _HomeScreenState extends State<HomeScreen> {
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-            child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            child: StreamBuilder<RiderOrdersQuerySnapshot>(
               stream: RiderOrdersService.instance.ordersStream,
               builder: (context, snapshot) {
                 final docs =
-                    snapshot.data?.docs ??
-                    const <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+                    snapshot.data?.docs ?? const <RiderOrderDocument>[];
                 var deliveredTodayCount = 0;
                 var netIncomeToday = 0.0;
                 final last7Days = _buildLast7DayIncomeSummaries(docs);
@@ -1206,6 +1236,9 @@ class _HomeScreenState extends State<HomeScreen> {
         child: SafeArea(
           child: CustomScrollView(
             slivers: [
+              const SliverToBoxAdapter(
+                child: RiderAlertPermissionBanner(),
+              ),
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(20, 12, 20, 10),
@@ -1306,14 +1339,12 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                         const SizedBox(height: 12),
-                        StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                        StreamBuilder<RiderOrdersQuerySnapshot>(
                           stream: RiderOrdersService.instance.ordersStream,
                           builder: (context, snapshot) {
                             final docs =
                                 snapshot.data?.docs ??
-                                const <
-                                  QueryDocumentSnapshot<Map<String, dynamic>>
-                                >[];
+                                const <RiderOrderDocument>[];
                             var acceptedCount = 0;
                             var deliveringCount = 0;
                             var deliveredCount = 0;

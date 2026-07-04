@@ -8,6 +8,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../call_screen.dart';
 import '../main.dart';
@@ -37,18 +38,11 @@ class NotificationService {
   Future<void> initialize() async {
     if (_initialized) return;
 
-    await FirebaseMessaging.instance.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-      provisional: false,
-    );
-
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
     const iosSettings = DarwinInitializationSettings(
-      requestAlertPermission: true,
-      requestBadgePermission: true,
-      requestSoundPermission: true,
+      requestAlertPermission: false,
+      requestBadgePermission: false,
+      requestSoundPermission: false,
     );
     const initializationSettings = InitializationSettings(
       android: androidSettings,
@@ -71,6 +65,35 @@ class NotificationService {
 
     _setupCallIntentBridge();
     _initialized = true;
+  }
+
+  Future<bool> enablePushNotifications() async {
+    if (!_initialized) {
+      await initialize();
+    }
+
+    final settings = await FirebaseMessaging.instance.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+      provisional: false,
+    );
+
+    final authorized =
+        settings.authorizationStatus == AuthorizationStatus.authorized ||
+        settings.authorizationStatus == AuthorizationStatus.provisional;
+    if (!authorized) {
+      return false;
+    }
+
+    if (Platform.isAndroid) {
+      final status = await Permission.notification.request();
+      if (!status.isGranted && !status.isLimited) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   Future<void> _handleForegroundMessage(RemoteMessage message) async {
