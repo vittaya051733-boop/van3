@@ -133,12 +133,27 @@ class OverlayAlertService {
     if (_isInitialized) return;
 
     await _initializeLocalNotifications();
-    await _requestNotificationPermission();
-    await _requestOverlayPermission();
+    // Permission prompts need a mounted Activity; defer until after first frame.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_requestRuntimePermissionsSafely());
+    });
     _listenForegroundMessages();
     await _handleInitialMessage();
 
     _isInitialized = true;
+  }
+
+  static Future<void> _requestRuntimePermissionsSafely() async {
+    try {
+      await _requestNotificationPermission();
+    } catch (_) {
+      // MethodChannelPermissionHandler can throw when Activity is not ready.
+    }
+    try {
+      await _requestOverlayPermission();
+    } catch (_) {
+      // Overlay permission is optional; ignore channel failures at startup.
+    }
   }
 
   static Future<void> _requestNotificationPermission() async {
@@ -374,8 +389,10 @@ class OverlayAlertService {
     }
 
     try {
-      final orderSnapshot =
-          await FirebaseFirestore.instance.collection('orders').doc(orderId).get();
+      final orderSnapshot = await _safeOrderSnapshot(orderId);
+      if (orderSnapshot == null) {
+        return true;
+      }
       final order = orderSnapshot.data();
       if (order == null) {
         return true;
@@ -417,11 +434,34 @@ class OverlayAlertService {
 
     for (final candidate in candidates) {
       final text = candidate?.trim();
-      if (text != null && text.isNotEmpty) {
+      if (text != null && _isValidFirestoreDocId(text)) {
         return text;
       }
     }
     return null;
+  }
+
+  static bool _isValidFirestoreDocId(String id) {
+    if (id.isEmpty || id.length > 1500 || id.contains('/')) {
+      return false;
+    }
+    return true;
+  }
+
+  static Future<DocumentSnapshot<Map<String, dynamic>>?> _safeOrderSnapshot(
+    String orderId,
+  ) async {
+    if (!_isValidFirestoreDocId(orderId)) {
+      return null;
+    }
+    try {
+      return await FirebaseFirestore.instance
+          .collection('orders')
+          .doc(orderId)
+          .get();
+    } catch (_) {
+      return null;
+    }
   }
 
   static bool? _asBool(Object? value) {
@@ -744,7 +784,7 @@ class GlobalOrderAlertService {
     ];
     for (final candidate in candidates) {
       final text = candidate?.trim();
-      if (text != null && text.isNotEmpty) {
+      if (text != null && OverlayAlertService._isValidFirestoreDocId(text)) {
         return text;
       }
     }
@@ -864,9 +904,8 @@ class GlobalOrderAlertService {
     }
 
     try {
-      final snapshot =
-          await FirebaseFirestore.instance.collection('orders').doc(orderId).get();
-      final data = snapshot.data();
+      final snapshot = await OverlayAlertService._safeOrderSnapshot(orderId);
+      final data = snapshot?.data();
       final platformConfirmed = _isPlatformConfirmedOrder(payload);
       if (data != null && (_shouldShowOrder(data) || platformConfirmed)) {
         final shown = await _showOrderDialog(orderId: orderId, data: data);

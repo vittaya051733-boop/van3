@@ -462,6 +462,22 @@ class _HomeScreenState extends State<HomeScreen> {
         payload['locationStatus'] = 'offline';
       }
 
+      if (value && targetHasAnyReadyMode) {
+        try {
+          final riderDoc = await FirebaseFirestore.instance
+              .collection('riders')
+              .doc(user.uid)
+              .get();
+          final existingType =
+              riderDoc.data()?['vehicleType']?.toString().trim();
+          if (existingType == null || existingType.isEmpty) {
+            payload['vehicleType'] = 'motorcycle';
+          }
+        } catch (_) {
+          payload['vehicleType'] = 'motorcycle';
+        }
+      }
+
       // ----- Write to Firestore (this is the SINGLE source of truth) -------
       debugPrint(
         '[van3:ready-toggle] uid=${user.uid} onlineReady=$targetOnlineReady '

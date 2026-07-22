@@ -115,13 +115,18 @@ class _WalletTopUpDialogState extends State<WalletTopUpDialog> {
     try {
       final double pixelRatio = View.of(context).devicePixelRatio;
 
-      final permission = await Permission.photos.request();
-      if (!permission.isGranted) {
-        final storagePermission = await Permission.storage.request();
-        if (!storagePermission.isGranted) {
-          _showSnack('ไม่ได้รับสิทธิ์เข้าถึงรูปภาพ/พื้นที่จัดเก็บ');
-          return;
+      try {
+        final permission = await Permission.photos.request();
+        if (!permission.isGranted) {
+          final storagePermission = await Permission.storage.request();
+          if (!storagePermission.isGranted) {
+            _showSnack('ไม่ได้รับสิทธิ์เข้าถึงรูปภาพ/พื้นที่จัดเก็บ');
+            return;
+          }
         }
+      } catch (_) {
+        _showSnack('ไม่สามารถขอสิทธิ์เข้าถึงรูปภาพได้');
+        return;
       }
 
       if (!mounted) {

@@ -229,6 +229,8 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
       ..sort((a, b) => b.compareTo(a));
 
     return ListView.separated(
+      key: const PageStorageKey<String>('rider-history-sections'),
+      physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.all(12),
       itemCount: orderedKeys.length,
       separatorBuilder: (_, __) => const SizedBox(height: 10),
@@ -238,6 +240,10 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
         final dayDocs =
             groupedDocs[dayKey] ??
             const <RiderOrderDocument>[];
+
+        final expanded =
+            _expandedHistoryDayKeys.contains(dayKey) ||
+            (!_historyExpansionLoaded && index == 0);
 
         return Container(
           decoration: BoxDecoration(
@@ -252,10 +258,10 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
             ],
           ),
           child: ExpansionTile(
-            key: PageStorageKey<String>('history-$dayKey'),
-            initiallyExpanded:
-                _expandedHistoryDayKeys.contains(dayKey) ||
-                (!_historyExpansionLoaded && index == 0),
+            // ValueKey only — PageStorageKey collides with ListView scroll
+            // restoration and triggers ScrollPosition.restoreScrollOffset crashes.
+            key: ValueKey<String>('history-$dayKey-$expanded'),
+            initiallyExpanded: expanded,
             onExpansionChanged: (expanded) {
               setState(() {
                 if (expanded) {

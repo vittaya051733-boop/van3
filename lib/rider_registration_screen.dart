@@ -50,6 +50,19 @@ class _RiderRegistrationScreenState extends State<RiderRegistrationScreen> {
   File? _licenseImage;
   File? _motorcycleImage;
   File? _bookBankImage;
+  File? _profilePhotoImage;
+  String? _vehicleType;
+  final _licensePlateController = TextEditingController();
+  final _vehicleColorController = TextEditingController();
+  final _vehicleBrandModelController = TextEditingController();
+  bool _isElectricVehicle = false;
+
+  static const List<MapEntry<String, String>> _vehicleTypes =
+      <MapEntry<String, String>>[
+    MapEntry('motorcycle', 'มอเตอร์ไซค์'),
+    MapEntry('sedan', 'รถเก๋ง'),
+    MapEntry('pickup', 'รถกระบะ'),
+  ];
 
   @override
   void dispose() {
@@ -60,6 +73,9 @@ class _RiderRegistrationScreenState extends State<RiderRegistrationScreen> {
     _nameController.dispose();
     _accountNumberController.dispose();
     _accountOwnerController.dispose();
+    _licensePlateController.dispose();
+    _vehicleColorController.dispose();
+    _vehicleBrandModelController.dispose();
     super.dispose();
   }
 
@@ -101,8 +117,19 @@ class _RiderRegistrationScreenState extends State<RiderRegistrationScreen> {
     }
     if (_licenseImage == null ||
         _motorcycleImage == null ||
-        _bookBankImage == null) {
-      _showSnack('กรุณาอัปโหลดเอกสารให้ครบ');
+        _bookBankImage == null ||
+        _profilePhotoImage == null) {
+      _showSnack('กรุณาอัปโหลดรูปโปรไฟล์และเอกสารให้ครบ');
+      return;
+    }
+    if (_vehicleType == null || _vehicleType!.isEmpty) {
+      _showSnack('กรุณาเลือกประเภทรถ');
+      return;
+    }
+    if (_licensePlateController.text.trim().isEmpty ||
+        _vehicleColorController.text.trim().isEmpty ||
+        _vehicleBrandModelController.text.trim().isEmpty) {
+      _showSnack('กรุณากรอกข้อมูลรถให้ครบ');
       return;
     }
     if (_selectedBank == null || _selectedBank!.isEmpty) {
@@ -125,6 +152,7 @@ class _RiderRegistrationScreenState extends State<RiderRegistrationScreen> {
       final licenseUrl = await _uploadImage(_licenseImage!, 'license');
       final bikeUrl = await _uploadImage(_motorcycleImage!, 'motorcycle');
       final bankUrl = await _uploadImage(_bookBankImage!, 'book_bank');
+      final profileUrl = await _uploadImage(_profilePhotoImage!, 'profile');
 
       await RiderRegistrationService.submitRegistration(
         user: user,
@@ -137,6 +165,12 @@ class _RiderRegistrationScreenState extends State<RiderRegistrationScreen> {
         driverLicenseImageUrl: licenseUrl,
         motorcycleImageUrl: bikeUrl,
         bookBankImageUrl: bankUrl,
+        profilePhotoUrl: profileUrl,
+        vehicleType: _vehicleType!,
+        licensePlate: _licensePlateController.text.trim(),
+        vehicleColor: _vehicleColorController.text.trim(),
+        vehicleBrandModel: _vehicleBrandModelController.text.trim(),
+        isElectricVehicle: _isElectricVehicle,
         acceptedPrivacy: _acceptedPrivacy,
         pushOptIn: _pushOptIn,
       );
@@ -295,6 +329,74 @@ class _RiderRegistrationScreenState extends State<RiderRegistrationScreen> {
                     padding: const EdgeInsets.all(16),
                     children: <Widget>[
                       const Text(
+                        'โปรไฟล์และข้อมูลรถ',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'ข้อมูลนี้จะแสดงให้ลูกค้าเห็นหลังจองการเดินทาง',
+                        style: TextStyle(color: Colors.black54),
+                      ),
+                      const SizedBox(height: 12),
+                      _imageTile(
+                        title: 'รูปโปรไฟล์ (ใบหน้าชัดเจน)',
+                        file: _profilePhotoImage,
+                        onPick: () => _pickImage(
+                          (file) => setState(() => _profilePhotoImage = file),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        value: _vehicleType,
+                        items: _vehicleTypes
+                            .map(
+                              (entry) => DropdownMenuItem<String>(
+                                value: entry.key,
+                                child: Text(entry.value),
+                              ),
+                            )
+                            .toList(),
+                        decoration: const InputDecoration(
+                          labelText: 'ประเภทรถ',
+                          border: OutlineInputBorder(),
+                        ),
+                        onChanged: (value) =>
+                            setState(() => _vehicleType = value),
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _licensePlateController,
+                        textCapitalization: TextCapitalization.characters,
+                        decoration: const InputDecoration(
+                          labelText: 'ทะเบียนรถ',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _vehicleColorController,
+                        decoration: const InputDecoration(
+                          labelText: 'สีรถ (เช่น ขาว)',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _vehicleBrandModelController,
+                        decoration: const InputDecoration(
+                          labelText: 'ยี่ห้อ/รุ่น (เช่น AION Y)',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: _isElectricVehicle,
+                        onChanged: (value) =>
+                            setState(() => _isElectricVehicle = value),
+                        title: const Text('รถไฟฟ้า (EV)'),
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
                         'เอกสารยืนยันตัวตน',
                         style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
                       ),
@@ -446,8 +548,21 @@ class _RiderRegistrationScreenState extends State<RiderRegistrationScreen> {
                                 if (_step == 1 &&
                                     (_licenseImage == null ||
                                         _motorcycleImage == null ||
-                                        _bookBankImage == null)) {
-                                  _showSnack('กรุณาอัปโหลดเอกสารให้ครบ');
+                                        _bookBankImage == null ||
+                                        _profilePhotoImage == null ||
+                                        _vehicleType == null ||
+                                        _licensePlateController.text
+                                            .trim()
+                                            .isEmpty ||
+                                        _vehicleColorController.text
+                                            .trim()
+                                            .isEmpty ||
+                                        _vehicleBrandModelController.text
+                                            .trim()
+                                            .isEmpty)) {
+                                  _showSnack(
+                                    'กรุณากรอกข้อมูลรถและอัปโหลดรูปให้ครบ',
+                                  );
                                   return;
                                 }
                                 final next = _step + 1;

@@ -87,8 +87,12 @@ class NotificationService {
     }
 
     if (Platform.isAndroid) {
-      final status = await Permission.notification.request();
-      if (!status.isGranted && !status.isLimited) {
+      try {
+        final status = await Permission.notification.request();
+        if (!status.isGranted && !status.isLimited) {
+          return false;
+        }
+      } catch (_) {
         return false;
       }
     }
