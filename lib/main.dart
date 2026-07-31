@@ -64,6 +64,36 @@ void overlayMain() {
   );
 }
 
+const Duration _startupInitTimeout = Duration(seconds: 8);
+
+/// Debug-only App Check token pinned for van3 emulator/dev builds.
+/// Register this exact token once in Firebase Console → App Check → van3 → Debug tokens.
+/// Override at build time with --dart-define=VAN3_APP_CHECK_DEBUG_TOKEN=...
+const String _van3AppCheckDebugToken = String.fromEnvironment(
+  'VAN3_APP_CHECK_DEBUG_TOKEN',
+  defaultValue: '7e1d581a-5018-46b9-ae4f-66967a8fe773',
+);
+
+Future<void> _runStartupStep(
+  String label,
+  Future<void> Function() action,
+) async {
+  if (kDebugMode) {
+    debugPrint('[van3:startup] begin $label');
+  }
+  try {
+    await action().timeout(_startupInitTimeout);
+    if (kDebugMode) {
+      debugPrint('[van3:startup] done $label');
+    }
+  } catch (error, stackTrace) {
+    if (kDebugMode) {
+      debugPrint('[van3:startup] skip $label: $error');
+      debugPrint('$stackTrace');
+    }
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
@@ -83,7 +113,7 @@ void main() async {
         .activate(
           providerAndroid: kReleaseMode
               ? const AndroidPlayIntegrityProvider()
-              : const AndroidDebugProvider(),
+              : AndroidDebugProvider(debugToken: _van3AppCheckDebugToken),
           providerApple: kReleaseMode
               ? const AppleDeviceCheckProvider()
               : const AppleDebugProvider(),
@@ -97,14 +127,30 @@ void main() async {
   }
 
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-  try {
-    await ObservabilityService.instance.initialize(appName: 'van3_rider');
-  } catch (_) {}
-  await NotificationService().initialize();
-  await OverlayAlertService.initialize();
-  await FcmTokenSyncService.instance.initialize();
+  await _runStartupStep(
+    'ObservabilityService',
+    () => ObservabilityService.instance.initialize(appName: 'van3_rider'),
+  );
+  await _runStartupStep(
+    'NotificationService',
+    () => NotificationService().initialize(),
+  );
+  await _runStartupStep(
+    'OverlayAlertService',
+    OverlayAlertService.initialize,
+  );
+  await _runStartupStep(
+    'FcmTokenSyncService',
+    FcmTokenSyncService.instance.initialize,
+  );
   RiderOrdersService.instance.initialize();
-  await GlobalOrderAlertService.instance.initialize();
+  await _runStartupStep(
+    'GlobalOrderAlertService',
+    GlobalOrderAlertService.instance.initialize,
+  );
+  if (kDebugMode) {
+    debugPrint('[van3:startup] runApp');
+  }
   runApp(const Van3RiderApp());
 }
 
@@ -133,14 +179,34 @@ class OverlayAlertService {
     if (_isInitialized) return;
 
     await _initializeLocalNotifications();
-    // Permission prompts need a mounted Activity; defer until after first frame.
+    // Permission prompts and launch notification handling need a mounted Activity.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_requestRuntimePermissionsSafely());
+      unawaited(_handleInitialMessageAfterLaunch());
     });
     _listenForegroundMessages();
-    await _handleInitialMessage();
 
     _isInitialized = true;
+  }
+
+  static Future<void> _handleInitialMessageAfterLaunch() async {
+    await _waitForNavigatorReady();
+    try {
+      await _handleInitialMessage().timeout(const Duration(seconds: 8));
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('[van3:startup] initial message handling skipped: $error');
+      }
+    }
+  }
+
+  static Future<void> _waitForNavigatorReady({int maxAttempts = 40}) async {
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+      if (Van3RiderApp.navigatorKey.currentState != null) {
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
   }
 
   static Future<void> _requestRuntimePermissionsSafely() async {
@@ -497,10 +563,16 @@ class OverlayAlertService {
 
     await _showUrgentLocalNotification(title: title, body: body, data: message.data);
 
+    if (!_canPresentSystemOverlay()) {
+      return;
+    }
+
     try {
-      final hasPermission = await overlay.FlutterOverlayWindow.isPermissionGranted();
+      final hasPermission = await overlay.FlutterOverlayWindow.isPermissionGranted()
+          .timeout(const Duration(seconds: 3), onTimeout: () => false);
       if (!hasPermission) {
-        await overlay.FlutterOverlayWindow.requestPermission();
+        await overlay.FlutterOverlayWindow.requestPermission()
+            .timeout(const Duration(seconds: 8));
       }
 
       await overlay.FlutterOverlayWindow.showOverlay(
@@ -512,10 +584,14 @@ class OverlayAlertService {
         overlayTitle: title,
         overlayContent: body,
         enableDrag: true,
-      );
+      ).timeout(const Duration(seconds: 5));
     } catch (_) {
       // Avoid crashing app in background isolate when overlay cannot be shown.
     }
+  }
+
+  static bool _canPresentSystemOverlay() {
+    return Van3RiderApp.navigatorKey.currentState != null;
   }
 
   static bool _shouldShowInAppDialog(Map<String, dynamic> data) {
@@ -791,16 +867,6 @@ class GlobalOrderAlertService {
     return null;
   }
 
-  Map<String, dynamic> _fallbackOrderData(String orderId) {
-    return <String, dynamic>{
-      'sourceApp': 'van2_customer',
-      'customerConfirmed': true,
-      'riderNotifyReady': true,
-      'status': 'awaiting_rider',
-      'orderId': orderId,
-    };
-  }
-
   bool _isPlatformConfirmedOrder(Map<String, dynamic>? payload) {
     return payload != null && _extractOrderId(payload) != null;
   }
@@ -928,16 +994,9 @@ class GlobalOrderAlertService {
       }
 
       if (platformConfirmed) {
-        final shown = await _showOrderDialog(
-          orderId: orderId,
-          data: _fallbackOrderData(orderId),
+        debugPrint(
+          '[GlobalOrderAlertService] order data unavailable for orderId=$orderId; retry scheduled',
         );
-        if (shown) {
-          _seenOrderIds.add(orderId);
-          _pendingOrderRetryAttempt = 0;
-          return true;
-        }
-
         _pendingPlatformOrders[orderId] = <String, dynamic>{
           ...?payload,
           'orderId': orderId,
@@ -1030,10 +1089,24 @@ class Van3RiderApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<FirebaseApp>(
-      future: _initializeFirebase(),
-      builder: (context, snapshot) {
-        return MaterialApp(
+    if (Firebase.apps.isEmpty) {
+      return FutureBuilder<FirebaseApp>(
+        future: _initializeFirebase(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const MaterialApp(
+              home: Scaffold(body: Center(child: CircularProgressIndicator())),
+            );
+          }
+          return _buildMaterialApp();
+        },
+      );
+    }
+    return _buildMaterialApp();
+  }
+
+  Widget _buildMaterialApp() {
+    return MaterialApp(
           title: 'Van3 Rider',
           debugShowCheckedModeBanner: false,
           navigatorKey: navigatorKey,
@@ -1070,34 +1143,17 @@ class Van3RiderApp extends StatelessWidget {
             '/registration-pending': (context) =>
                 const RiderRegistrationPendingScreen(),
           },
-          home: _buildHome(snapshot),
+          home: _buildHome(),
         );
-      },
-    );
   }
 
-  Widget _buildHome(AsyncSnapshot<FirebaseApp> snapshot) {
-    if (snapshot.connectionState == ConnectionState.waiting) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-    if (snapshot.hasError) {
-      return const Scaffold(
-        body: Center(
-          child: Padding(
-            padding: EdgeInsets.all(24),
-            child: Text(
-              'ตั้งค่า Firebase ไม่สมบูรณ์ กรุณาเชื่อมโปรเจกต์ก่อนใช้งานล็อกอิน',
-              textAlign: TextAlign.center,
-            ),
-          ),
-        ),
-      );
-    }
-
+  Widget _buildHome() {
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
+      initialData: FirebaseAuth.instance.currentUser,
       builder: (context, authSnapshot) {
-        if (authSnapshot.connectionState == ConnectionState.waiting) {
+        if (authSnapshot.connectionState == ConnectionState.waiting &&
+            authSnapshot.data == null) {
           return const Scaffold(body: Center(child: CircularProgressIndicator()));
         }
         return authSnapshot.hasData

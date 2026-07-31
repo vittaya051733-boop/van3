@@ -175,6 +175,11 @@ if (-not $target.Id) {
 Restore-Van3EmulatorWindow
 
 $projectRoot = Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "..")
+$devDir = Join-Path $projectRoot ".flutter-dev"
+$runLog = Join-Path $devDir "run-output.log"
+New-Item -ItemType Directory -Force -Path $devDir | Out-Null
+
 Set-Location $projectRoot
 Write-Host "Running van3 on $targetId (AVD: $avdName)"
-flutter run -d $targetId
+Write-Host "Log: $runLog"
+flutter run -d $targetId 2>&1 | Tee-Object -FilePath $runLog

@@ -5,11 +5,20 @@ import 'utils/app_colors.dart';
 import 'admin_contact_screen.dart';
 import 'admin_support_inbox_screen.dart';
 import 'privacy_security_screen.dart';
+import 'rider_profile_edit_screen.dart';
 import 'rider_reviews_screen.dart';
 import 'services/admin_support_config.dart';
+import 'services/rider_registration_service.dart';
 
-class RiderSettingsScreen extends StatelessWidget {
+class RiderSettingsScreen extends StatefulWidget {
   const RiderSettingsScreen({super.key});
+
+  @override
+  State<RiderSettingsScreen> createState() => _RiderSettingsScreenState();
+}
+
+class _RiderSettingsScreenState extends State<RiderSettingsScreen> {
+  int _profileRefreshToken = 0;
 
   String _displayName(User? user) {
     final name = user?.displayName?.trim();
@@ -141,6 +150,62 @@ class RiderSettingsScreen extends StatelessWidget {
       ),
       body: ListView(
         children: [
+          _sectionTitle('โปรไฟล์'),
+          FutureBuilder<RiderProfileData>(
+            key: ValueKey<int>(_profileRefreshToken),
+            future: user == null
+                ? null
+                : RiderRegistrationService.fetchProfile(user.uid),
+            builder: (context, snapshot) {
+              final complete = snapshot.data?.isCompleteForCustomerTravel == true;
+              return ListTile(
+                leading: const Icon(Icons.badge_outlined),
+                title: const Text('แก้ไขโปรไฟล์ไรเดอร์'),
+                subtitle: Text(
+                  complete
+                      ? 'รูป ข้อมูลรถ เอกสาร และบัญชีธนาคาร'
+                      : 'ยังขาดข้อมูลที่ van2 ใช้ในหน้าเดินทาง — แตะเพื่อเติม',
+                ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    if (!complete && snapshot.connectionState == ConnectionState.done)
+                      Container(
+                        margin: const EdgeInsets.only(right: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF7ED),
+                          borderRadius: BorderRadius.circular(99),
+                        ),
+                        child: const Text(
+                          'ไม่ครบ',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFFEA580C),
+                          ),
+                        ),
+                      ),
+                    const Icon(Icons.chevron_right_rounded),
+                  ],
+                ),
+                onTap: () async {
+                  final saved = await Navigator.of(context).push<bool>(
+                    MaterialPageRoute<bool>(
+                      builder: (_) => const RiderProfileEditScreen(),
+                    ),
+                  );
+                  if (saved == true && mounted) {
+                    setState(() => _profileRefreshToken++);
+                  }
+                },
+              );
+            },
+          ),
+          const Divider(height: 1),
           _sectionTitle('รีวิว'),
           ListTile(
             leading: const Icon(Icons.star_rate_rounded),

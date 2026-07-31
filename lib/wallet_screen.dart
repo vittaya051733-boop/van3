@@ -1,12 +1,12 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
-import 'qr_scanner_screen.dart';
-import 'wallet_action_dialogs.dart';
 import 'wallet_top_up_dialog.dart';
+import 'wallet_withdraw_dialog.dart';
 import 'services/rider_orders_service.dart';
 import 'utils/order_pay_at_destination.dart';
 
@@ -19,6 +19,7 @@ class WalletScreen extends StatefulWidget {
 
 class _WalletScreenState extends State<WalletScreen> {
   double _currentCredit = 0.0;
+  double _withdrawableBalance = 0.0;
   String? _uid;
 
   static const Color _dashboardOrangeTop = Color(0xFFFF9F1C);
@@ -169,7 +170,7 @@ class _WalletScreenState extends State<WalletScreen> {
               if (creditType == 'order_pay_at_destination_hold') {
                 title = 'หักเครดิต (รับงานจ่ายปลายทาง)';
               } else if (creditType == 'order_pay_at_destination_release') {
-                title = 'คืนเครดิต (ค่าส่งสุทธิ • รับปลายทาง)';
+                title = 'คืนเครดิต (เลิกใช้แล้ว • รับปลายทาง)';
               } else if (provider == 'slipok' && status == 'verified') {
                 title = 'เติมเครดิต (ตรวจสลิป)';
               } else if (provider != null && provider.isNotEmpty) {
@@ -379,38 +380,6 @@ class _WalletScreenState extends State<WalletScreen> {
     super.dispose();
   }
 
-  Future<void> _openQRScanner() async {
-    final result = await Navigator.of(context).push<String>(
-      MaterialPageRoute<String>(
-        builder: (context) => const QRScannerScreen(),
-      ),
-    );
-    if (!mounted || result == null || result.isEmpty) {
-      return;
-    }
-    _handleScannedQRCode(result);
-  }
-
-  void _handleScannedQRCode(String data) {
-    if (data.startsWith('pay:')) {
-      final amount = double.tryParse(data.substring(4));
-      if (amount != null && amount > 0) {
-        setState(() => _currentCredit -= amount);
-        _showSnack('จ่ายเงิน $amount บาท สำเร็จ');
-        return;
-      }
-    } else if (data.startsWith('receive:')) {
-      final amount = double.tryParse(data.substring(8));
-      if (amount != null && amount > 0) {
-        setState(() => _currentCredit += amount);
-        _showSnack('รับเงิน $amount บาท สำเร็จ');
-        return;
-      }
-    }
-
-    _showSnack('QR ไม่ถูกต้อง: $data');
-  }
-
   Future<void> _fetchCurrentCredit() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
@@ -421,23 +390,47 @@ class _WalletScreenState extends State<WalletScreen> {
       setState(() => _uid = user.uid);
     }
 
-    final snapshot = await FirebaseFirestore.instance
-        .collection('credits')
-        .where('uid', isEqualTo: user.uid)
-        .get();
+    try {
+      final result = await FirebaseFunctions.instanceFor(
+        region: 'asia-southeast1',
+      ).httpsCallable('getWithdrawableBalance').call(<String, dynamic>{
+        'actorType': 'rider',
+      });
+      final data = result.data is Map
+          ? Map<String, dynamic>.from(result.data as Map)
+          : const <String, dynamic>{};
+      final withdrawable = (data['availableBalance'] as num?)?.toDouble() ?? 0;
+      final creditTotal = (data['creditTotal'] as num?)?.toDouble() ?? withdrawable;
 
-    var total = 0.0;
-    for (final doc in snapshot.docs) {
-      final amount = doc.data()['amount'];
-      if (amount is num) {
-        total += amount.toDouble();
+      if (!mounted) {
+        return;
       }
-    }
+      setState(() {
+        _withdrawableBalance = withdrawable;
+        _currentCredit = creditTotal;
+      });
+    } catch (_) {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('credits')
+          .where('uid', isEqualTo: user.uid)
+          .get();
 
-    if (!mounted) {
-      return;
+      var total = 0.0;
+      for (final doc in snapshot.docs) {
+        final amount = doc.data()['amount'];
+        if (amount is num) {
+          total += amount.toDouble();
+        }
+      }
+
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _currentCredit = total;
+        _withdrawableBalance = total;
+      });
     }
-    setState(() => _currentCredit = total);
   }
 
   Future<void> _requestWithdraw() async {
@@ -447,23 +440,20 @@ class _WalletScreenState extends State<WalletScreen> {
       return;
     }
 
-    await _fetchCurrentCredit();
-    if (!mounted) {
-      return;
-    }
-    if (_currentCredit <= 0) {
-      _showSnack('คุณไม่มีเครดิตสำหรับถอนเงิน');
+    final result = await showDialog<double>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const WalletWithdrawDialog(actorType: 'rider'),
+    );
+
+    if (!mounted || result == null) {
       return;
     }
 
-    await FirebaseFirestore.instance.collection('withdraw_requests').add({
-      'uid': user.uid,
-      'amount': _currentCredit,
-      'timestamp': FieldValue.serverTimestamp(),
-      'status': 'pending',
-      'companyBankAccount': null,
-    });
-    _showSnack('ส่งคำขอถอนเงินเรียบร้อย (รอบริษัทอนุมัติ)');
+    await _fetchCurrentCredit();
+    _showSnack(
+      'ส่งคำขอถอน ${result.toStringAsFixed(2)} บาท — กำลังโอนเข้าบัญชี',
+    );
   }
 
   Future<void> _promptTopUpAmount() async {
@@ -527,60 +517,14 @@ class _WalletScreenState extends State<WalletScreen> {
               bottom: false,
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        icon: const Icon(Icons.arrow_downward),
-                        label: const Text('รับเงิน'),
-                        style: _walletActionButtonStyle(),
-                        onPressed: () {
-                          showDialog<void>(
-                            context: context,
-                            builder: (context) => ReceiveMoneyDialog(uid: uid),
-                          );
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        icon: const Icon(Icons.arrow_upward),
-                        label: const Text('จ่ายเงิน'),
-                        style: _walletActionButtonStyle(),
-                        onPressed: () {
-                          showDialog<void>(
-                            context: context,
-                            builder: (context) => PayMoneyDialog(uid: uid),
-                          );
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        icon: const Icon(Icons.compare_arrows),
-                        label: const Text('โอนเงิน'),
-                        style: _walletActionButtonStyle(),
-                        onPressed: () {
-                          showDialog<void>(
-                            context: context,
-                            builder: (context) => TransferMoneyDialog(uid: uid),
-                          );
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        icon: const Icon(Icons.money_off),
-                        label: const Text('ถอนเงิน'),
-                        style: _walletActionButtonStyle(),
-                        onPressed: _requestWithdraw,
-                      ),
-                    ),
-                  ],
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.money_off),
+                    label: const Text('ถอนเงิน'),
+                    style: _walletActionButtonStyle(),
+                    onPressed: _requestWithdraw,
+                  ),
                 ),
               ),
             ),
@@ -651,6 +595,13 @@ class _WalletScreenState extends State<WalletScreen> {
                                 color: Colors.white,
                               ),
                             ),
+                            if ((_withdrawableBalance - _currentCredit).abs() > 0.01) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                'ถอนได้ ${_withdrawableBalance.toStringAsFixed(2)} บาท',
+                                style: const TextStyle(color: _dashboardCream, fontSize: 13),
+                              ),
+                            ],
                             const SizedBox(height: 8),
                             Row(
                               children: [
@@ -686,7 +637,7 @@ class _WalletScreenState extends State<WalletScreen> {
                       _buildTodayNetIncomeCard(uid),
                       const SizedBox(height: 18),
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Column(
                             children: [
@@ -736,33 +687,6 @@ class _WalletScreenState extends State<WalletScreen> {
                               ),
                               const SizedBox(height: 8),
                               const Text('QR รับเงิน', style: TextStyle(fontSize: 14, color: _dashboardCream)),
-                            ],
-                          ),
-                          Column(
-                            children: [
-                              Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(16),
-                                  boxShadow: const [
-                                    BoxShadow(color: Color(0x24000000), blurRadius: 10),
-                                  ],
-                                ),
-                                child: IconButton(
-                                  icon: const Icon(
-                                    Icons.qr_code_scanner,
-                                    size: 48,
-                                    color: _dashboardOrangeMid,
-                                  ),
-                                  onPressed: _openQRScanner,
-                                  tooltip: 'สแกน QR',
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              const Text(
-                                'สแกนจ่าย/รับเงิน',
-                                style: TextStyle(fontSize: 14, color: _dashboardCream),
-                              ),
                             ],
                           ),
                         ],

@@ -1,17 +1,30 @@
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'services/fcm_token_sync_service.dart';
 import 'services/notification_service.dart';
 import 'services/privacy_consent_service.dart';
 import 'utils/app_colors.dart';
 import 'utils/phone_login_helper.dart';
+
+class _RiderLoginLookup {
+  const _RiderLoginLookup({
+    this.loginEmail,
+    this.useEmailLogin = false,
+    this.found = false,
+  });
+
+  final String? loginEmail;
+  final bool useEmailLogin;
+  final bool found;
+}
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -36,7 +49,6 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _isLoading = false;
   bool _isSocialLoading = false;
   bool _isPasswordVisible = false;
-  bool _isPasswordSaved = false;
   String? _socialLoadingKey;
 
   Future<void> _finishLogin() async {
@@ -91,6 +103,58 @@ class _LoginScreenState extends State<LoginScreen> {
         .set(data, SetOptions(merge: true));
   }
 
+  Future<_RiderLoginLookup> _lookupRiderLogin(String normalizedPhone) async {
+    try {
+      final callable = FirebaseFunctions.instanceFor(
+        region: 'asia-southeast1',
+      ).httpsCallable('resolveRiderLoginEmail');
+      final response = await callable.call(<String, dynamic>{
+        'phoneNumber': normalizedPhone,
+      });
+      final data = response.data;
+      if (data is Map) {
+        final loginEmail = data['loginEmail']?.toString().trim();
+        return _RiderLoginLookup(
+          loginEmail: loginEmail?.isNotEmpty == true ? loginEmail : null,
+          useEmailLogin: data['useEmailLogin'] == true,
+          found: data['found'] == true,
+        );
+      }
+    } on FirebaseFunctionsException catch (error) {
+      if (kDebugMode) {
+        debugPrint('resolveRiderLoginEmail failed: ${error.code} ${error.message}');
+      }
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('resolveRiderLoginEmail failed: $error');
+      }
+    }
+    return const _RiderLoginLookup();
+  }
+
+  Future<void> _signInWithResolvedEmail({
+    required String loginEmail,
+    required String password,
+    String? phoneInput,
+  }) async {
+    final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
+      email: loginEmail,
+      password: password,
+    );
+    if (credential.user == null) {
+      throw Exception('ไม่พบข้อมูลผู้ใช้หลังเข้าสู่ระบบ');
+    }
+    await _upsertRiderLoginUser(
+      credential.user!,
+      phoneInput: phoneInput,
+    );
+    if (!mounted) {
+      return;
+    }
+    setState(() => _isLoading = false);
+    await _finishLogin();
+  }
+
   @override
   void dispose() {
     _emailController.dispose();
@@ -111,37 +175,58 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(() => _isLoading = true);
       try {
         final normalizedPhone = PhoneLoginHelper.normalize(input);
-        final existingRider = await FirebaseFirestore.instance
-            .collection('riders')
-            .where('phoneNumber', isEqualTo: normalizedPhone)
-            .limit(1)
-            .get();
-
-        final loginEmail = existingRider.docs.isNotEmpty
-            ? (existingRider.docs.first.data()['loginEmail'] as String?)
-          : null;
-
-        if (loginEmail != null && loginEmail.isNotEmpty) {
-          final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
-            email: loginEmail,
-            password: password,
-          );
-          if (credential.user == null) {
-            throw Exception('ไม่พบข้อมูลผู้ใช้หลังเข้าสู่ระบบ');
-          }
-          await _upsertRiderLoginUser(
-            credential.user!,
-            phoneInput: normalizedPhone,
-          );
+        final lookup = await _lookupRiderLogin(normalizedPhone);
+        if (lookup.useEmailLogin) {
           if (!mounted) return;
           setState(() => _isLoading = false);
-          await _finishLogin();
+          _showSnack('บัญชีนี้ผูกกับอีเมล กรุณาเข้าสู่ระบบด้วยอีเมลแทนเบอร์โทร');
           return;
+        }
+        final loginCandidates = <String>{
+          if (lookup.loginEmail != null && lookup.loginEmail!.isNotEmpty)
+            lookup.loginEmail!,
+          PhoneLoginHelper.pseudoEmail(normalizedPhone),
+        };
+
+        FirebaseAuthException? lastAuthError;
+        for (final loginEmail in loginCandidates) {
+          try {
+            await _signInWithResolvedEmail(
+              loginEmail: loginEmail,
+              password: password,
+              phoneInput: normalizedPhone,
+            );
+            return;
+          } on FirebaseAuthException catch (error) {
+            lastAuthError = error;
+            if (error.code != 'user-not-found' && error.code != 'invalid-email') {
+              rethrow;
+            }
+          }
         }
 
         if (!mounted) return;
         setState(() => _isLoading = false);
+        if (lastAuthError?.code == 'wrong-password') {
+          _showSnack('รหัสผ่านไม่ถูกต้อง');
+          return;
+        }
+        if (lastAuthError?.code == 'user-disabled') {
+          _showSnack('บัญชีนี้ถูกปิดการใช้งาน');
+          return;
+        }
         _showSnack('ไม่พบบัญชีที่ผูกกับเบอร์โทรนี้');
+        return;
+      } on FirebaseAuthException catch (e) {
+        if (!mounted) return;
+        setState(() => _isLoading = false);
+        String message = 'ไม่สามารถเข้าสู่ระบบได้';
+        if (e.code == 'wrong-password') {
+          message = 'รหัสผ่านไม่ถูกต้อง';
+        } else if (e.code == 'user-disabled') {
+          message = 'บัญชีนี้ถูกปิดการใช้งาน';
+        }
+        _showSnack(message);
         return;
       } catch (e) {
         if (!mounted) return;
@@ -225,13 +310,31 @@ class _LoginScreenState extends State<LoginScreen> {
       await _finishLogin();
     } on GoogleSignInException catch (e) {
       if (e.code != GoogleSignInExceptionCode.canceled) {
+        if (kDebugMode) {
+          debugPrint('Google sign-in failed: ${e.code} ${e.description ?? ''}');
+        }
         _showSnack('ไม่สามารถเข้าสู่ระบบด้วย Google ได้ (${e.code.name})');
       }
     } on StateError catch (e) {
+      if (kDebugMode) {
+        debugPrint('Google sign-in configuration error: ${e.message}');
+      }
       _showSnack('ตั้งค่า Google Sign-In ไม่ครบ: ${e.message}');
     } on FirebaseAuthException catch (e) {
-      _showSnack('ไม่สามารถเข้าสู่ระบบด้วย Google ได้ (${e.code})');
-    } catch (_) {
+      if (kDebugMode) {
+        debugPrint('Firebase Google sign-in failed: ${e.code} ${e.message ?? ''}');
+      }
+      final message = e.message ?? '';
+      if (e.code == 'internal-error' && message.contains('blocked')) {
+        _showSnack('Firebase ยังบล็อก van3.rider.com — รอ SHA-1/App Check propagate หรือ rebuild แอpp');
+      } else {
+        _showSnack('ไม่สามารถเข้าสู่ระบบด้วย Google ได้ (${e.code})');
+      }
+    } catch (error, stackTrace) {
+      if (kDebugMode) {
+        debugPrint('Unexpected Google sign-in error: $error');
+        debugPrint('$stackTrace');
+      }
       _showSnack('ไม่สามารถเข้าสู่ระบบด้วย Google ได้');
     } finally {
       if (mounted) {
@@ -348,45 +451,15 @@ class _LoginScreenState extends State<LoginScreen> {
               },
             ),
             const SizedBox(height: 4),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pushNamed('/forgot'),
-                  child: const Text(
-                    'ลืมรหัสผ่าน?',
-                    style: TextStyle(color: AppColors.accent, fontWeight: FontWeight.w500),
-                  ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: () => Navigator.of(context).pushNamed('/forgot'),
+                child: const Text(
+                  'ลืมรหัสผ่าน?',
+                  style: TextStyle(color: AppColors.accent, fontWeight: FontWeight.w500),
                 ),
-                Row(
-                  children: [
-                    SizedBox(
-                      width: 24,
-                      height: 24,
-                      child: Checkbox(
-                        value: _isPasswordSaved,
-                        onChanged: (bool? value) async {
-                          if (value == true) {
-                            final prefs = await SharedPreferences.getInstance();
-                            await prefs.setString(
-                              'saved_password_${_emailController.text}',
-                              _passwordController.text,
-                            );
-                          }
-                          setState(() => _isPasswordSaved = value ?? false);
-                        },
-                        activeColor: AppColors.accent,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    const Text(
-                      'บันทึกรหัสผ่าน',
-                      style: TextStyle(fontSize: 14, color: Color(0xFF718096)),
-                    ),
-                  ],
-                ),
-              ],
+              ),
             ),
             const SizedBox(height: 24),
             ElevatedButton(
@@ -412,7 +485,7 @@ class _LoginScreenState extends State<LoginScreen> {
               width: double.infinity,
               child: _socialButton(
                 onPressed: _isSocialLoading ? null : _signInWithGoogle,
-                assetImage: 'assets/file_0000000075b0720680f74d4375d75c25.png',
+                assetImage: 'assets/google_logo.png',
                 label: 'เข้าสู่ระบบด้วย Google',
                 backgroundColor: Colors.white,
                 foregroundColor: Colors.black87,
@@ -452,9 +525,9 @@ class _LoginHeader extends StatelessWidget {
             decoration: BoxDecoration(borderRadius: BorderRadius.circular(20)),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(20.0),
-              child: const Image(
-                image: AssetImage('assets/file_000000008fc872089268acc9b04e5bcf.png'),
-                fit: BoxFit.cover,
+              child: Image.asset(
+                'assets/app_logo.png',
+                fit: BoxFit.contain,
               ),
             ),
           ),

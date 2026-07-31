@@ -1,6 +1,38 @@
 class PromptPayQrPayload {
   PromptPayQrPayload._();
 
+  /// Builds a Thai QR Payment payload from a PromptPay phone (9–10 digits)
+  /// or national/tax ID (13 digits).
+  static String? build({
+    required String promptPayId,
+    required double amount,
+  }) {
+    final digits = _digitsOnly(promptPayId);
+    if (digits.length == 13) {
+      return fromNationalIdOrTaxId(nationalIdOrTaxId: digits, amount: amount);
+    }
+    if (digits.length >= 9 && digits.length <= 10) {
+      return fromPhoneNumber(phoneNumber: digits, amount: amount);
+    }
+    return null;
+  }
+
+  static String fromPhoneNumber({
+    required String phoneNumber,
+    required double amount,
+  }) {
+    final normalizedDigits = _digitsOnly(phoneNumber);
+    if (normalizedDigits.length < 9 || normalizedDigits.length > 10) {
+      throw ArgumentError('PromptPay phone number must have 9-10 digits.');
+    }
+
+    final local = normalizedDigits.startsWith('0')
+        ? normalizedDigits.substring(1)
+        : normalizedDigits;
+    final proxyValue = '0066$local';
+    return _buildPayload(proxyType: '01', proxyValue: proxyValue, amount: amount);
+  }
+
   static String fromNationalIdOrTaxId({
     required String nationalIdOrTaxId,
     required double amount,
@@ -48,6 +80,23 @@ class PromptPayQrPayload {
 
   static String _digitsOnly(String input) {
     return input.replaceAll(RegExp(r'\D'), '');
+  }
+
+  /// Last 4 digits for on-screen display (never show full national ID).
+  static String maskedLastFour(String promptPayId) {
+    final digits = _digitsOnly(promptPayId);
+    if (digits.length >= 4) {
+      return digits.substring(digits.length - 4);
+    }
+    return '';
+  }
+
+  static String maskedDisplayLabel(String promptPayId) {
+    final suffix = maskedLastFour(promptPayId);
+    if (suffix.isEmpty) {
+      return 'PromptPay';
+    }
+    return 'PromptPay ••••$suffix';
   }
 
   static String _crc16CcittFalse(String value) {

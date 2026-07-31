@@ -1,6 +1,8 @@
 class PhoneLoginHelper {
   PhoneLoginHelper._();
 
+  static const String _pseudoEmailDomain = 'phone.vanmerchant.app';
+
   static String normalize(String input) {
     final cleaned = input.replaceAll(RegExp(r'\s+'), '').replaceAll('-', '');
     if (cleaned.startsWith('0') && cleaned.length == 10) {
@@ -13,5 +15,11 @@ class PhoneLoginHelper {
       return '+$cleaned';
     }
     return cleaned;
+  }
+
+  /// Matches van2 Cloud Functions `phoneToPseudoEmail` for legacy accounts.
+  static String pseudoEmail(String input) {
+    final digits = normalize(input).replaceAll('+', '');
+    return '$digits@$_pseudoEmailDomain';
   }
 }

@@ -7,6 +7,33 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+import java.util.Properties
+import java.io.FileInputStream
+
+val keystorePropertiesFile = rootProject.file("key.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+}
+
+fun Properties.keystoreProp(name: String): String? {
+    val value = getProperty(name)?.trim().orEmpty()
+    if (value.isNotEmpty()) {
+        return value
+    }
+    // Some editors write UTF-8 BOM on the first key.
+    val bomName = "\uFEFF$name"
+    val bomValue = getProperty(bomName)?.trim().orEmpty()
+    return bomValue.takeIf { it.isNotEmpty() }
+}
+
+val releaseStoreFile = keystoreProperties.keystoreProp("storeFile")
+    ?.let { rootProject.file(it) }
+val hasReleaseKeystore = releaseStoreFile?.exists() == true &&
+    keystoreProperties.keystoreProp("storePassword") != null &&
+    keystoreProperties.keystoreProp("keyPassword") != null &&
+    keystoreProperties.keystoreProp("keyAlias") != null
+
 android {
     namespace = "com.vanmarket.rider.van3"
     compileSdk = 36
@@ -18,11 +45,19 @@ android {
         isCoreLibraryDesugaringEnabled = true
     }
 
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                keyAlias = keystoreProperties.keystoreProp("keyAlias")
+                keyPassword = keystoreProperties.keystoreProp("keyPassword")
+                storeFile = releaseStoreFile
+                storePassword = keystoreProperties.keystoreProp("storePassword")
+            }
+        }
+    }
+
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "van3.rider.com"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
@@ -31,9 +66,11 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (hasReleaseKeystore) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

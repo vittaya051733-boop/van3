@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -11,11 +12,14 @@ import 'rider_chat_room_screen.dart';
 import 'services/chat_warmup_service.dart';
 import 'wallet_screen.dart';
 import 'services/rider_location_pusher.dart';
+import 'services/rider_order_actions.dart';
 import 'services/rider_app_image_prefetch.dart';
 import 'utils/contact_phone_resolver.dart';
 import 'utils/shop_image_resolver.dart';
 import 'utils/shop_location_resolver.dart';
+import 'utils/travel_vehicle_type.dart';
 import 'widgets/cached_app_image.dart';
+import 'widgets/travel_order_avatar.dart';
 import 'utils/order_call_launcher.dart';
 import 'utils/order_payment_label.dart';
 import 'utils/order_pay_at_destination.dart';
@@ -236,7 +240,13 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                     color: Color(0xFFFF6B35),
                   ),
                   child: Text(
-                    orderCode?.isNotEmpty == true ? 'ออเดอร์ใหม่ $orderCode' : 'ออเดอร์ใหม่',
+                    isTravelOrder
+                        ? (orderCode?.isNotEmpty == true
+                              ? 'งานเดินทางใหม่ $orderCode'
+                              : 'งานเดินทางใหม่')
+                        : (orderCode?.isNotEmpty == true
+                              ? 'ออเดอร์ใหม่ $orderCode'
+                              : 'ออเดอร์ใหม่'),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -257,7 +267,11 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                             Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: <Widget>[
-                                _ShopAvatar(imageUrl: viewData.shopImageUrl),
+                                _OrderAvatar(
+                                  imageUrl: viewData.shopImageUrl,
+                                  isTravelOrder: isTravelOrder,
+                                  travelVehicleType: viewData.travelVehicleType,
+                                ),
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: Column(
@@ -295,8 +309,15 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                               runSpacing: 10,
                               spacing: 10,
                               children: <Widget>[
-                                _InfoChip(label: 'ยอดรวม', value: 'THB ${viewData.total.toStringAsFixed(1)}'),
-                                _InfoChip(label: 'ค่าส่ง', value: 'THB ${viewData.shippingFee.toStringAsFixed(1)}'),
+                                _InfoChip(
+                                  label: isTravelOrder ? 'ค่าโดยสาร' : 'ยอดรวม',
+                                  value: 'THB ${viewData.total.toStringAsFixed(1)}',
+                                ),
+                                if (!isTravelOrder)
+                                  _InfoChip(
+                                    label: 'ค่าส่ง',
+                                    value: 'THB ${viewData.shippingFee.toStringAsFixed(1)}',
+                                  ),
                                 _InfoChip(
                                   label: distanceLabel,
                                   value: viewData.riderToShopDistanceKm == null
@@ -306,195 +327,318 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                               ],
                             ),
                             const SizedBox(height: 12),
-                            Text(
-                              '$destinationTitle: ${viewData.destinationLabel}',
-                              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-                            ),
                             if (isTravelOrder) ...<Widget>[
-                              const SizedBox(height: 8),
                               Text(
                                 'จุดรับ: ${viewData.pickupLabel}',
-                                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'จุดส่ง: ${viewData.destinationLabel}',
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                               if (viewData.vehicleTypeLabel != null) ...<Widget>[
                                 const SizedBox(height: 8),
                                 Text(
                                   'ประเภทรถ: ${viewData.vehicleTypeLabel}',
-                                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                                  style: const TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
                               ],
                               if (viewData.scheduleLabel != null) ...<Widget>[
                                 const SizedBox(height: 8),
                                 Text(
                                   'เวลาเดินทาง: ${viewData.scheduleLabel}',
-                                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                                  style: const TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
                               ],
+                            ] else ...<Widget>[
+                              Text(
+                                '$destinationTitle: ${viewData.destinationLabel}',
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
                             ],
-                            const SizedBox(height: 8),
-                            Wrap(
-                              spacing: 10,
-                              runSpacing: 10,
-                              children: <Widget>[
-                                if (viewData.destinationCoords != null)
-                                  OutlinedButton.icon(
-                                    onPressed: () async {
-                                      await _openMap(
-                                        viewData.destinationCoords!['lat']!,
-                                        viewData.destinationCoords!['lng']!,
-                                      );
-                                    },
-                                    icon: const Icon(Icons.map_outlined),
-                                    label: const Text('แผนที่ปลายทาง'),
-                                  ),
-                                if (viewData.shopCoords != null)
-                                  OutlinedButton.icon(
-                                    onPressed: () async {
-                                      await _openMap(
-                                        viewData.shopCoords!['lat']!,
-                                        viewData.shopCoords!['lng']!,
-                                      );
-                                    },
-                                    icon: const Icon(Icons.store_mall_directory_outlined),
-                                    label: Text(pickupMapLabel),
-                                  ),
-                              ],
-                            ),
+                            if (!isTravelOrder) ...<Widget>[
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 10,
+                                runSpacing: 10,
+                                children: <Widget>[
+                                  if (viewData.destinationCoords != null)
+                                    OutlinedButton.icon(
+                                      onPressed: () async {
+                                        await _openMap(
+                                          viewData.destinationCoords!['lat']!,
+                                          viewData.destinationCoords!['lng']!,
+                                        );
+                                      },
+                                      icon: const Icon(Icons.map_outlined),
+                                      label: const Text('แผนที่ปลายทาง'),
+                                    ),
+                                  if (viewData.shopCoords != null)
+                                    OutlinedButton.icon(
+                                      onPressed: () async {
+                                        await _openMap(
+                                          viewData.shopCoords!['lat']!,
+                                          viewData.shopCoords!['lng']!,
+                                        );
+                                      },
+                                      icon: const Icon(
+                                        Icons.store_mall_directory_outlined,
+                                      ),
+                                      label: Text(pickupMapLabel),
+                                    ),
+                                ],
+                              ),
+                            ],
                           ],
                         ),
                       ),
                       const SizedBox(height: 10),
                       _SectionCard(
                         title: 'ติดต่อ',
-                        child: Column(
-                          children: <Widget>[
-                            Row(
-                              children: <Widget>[
-                                Expanded(
-                                  child: OutlinedButton.icon(
-                                    onPressed: viewData.customerUid == null
-                                        ? null
-                                        : () async {
-                                            await OrderCallLauncher.startVoiceCall(
-                                              context: context,
-                                              peerUid: viewData.customerUid!,
-                                              peerLabel: OrderCallLauncher.readCustomerLabel(
-                                                viewData.orderData,
-                                              ),
-                                              orderData: viewData.orderData,
-                                              phoneNumber: viewData.customerPhone,
-                                              photoUrl: OrderCallLauncher.readCustomerPhotoUrl(
-                                                viewData.orderData,
-                                              ),
-                                            );
-                                          },
-                                    icon: const Icon(Icons.phone_in_talk_outlined),
-                                    label: const Text('โทรลูกค้า'),
+                        child: isTravelOrder
+                            ? Column(
+                                children: <Widget>[
+                                  Row(
+                                    children: <Widget>[
+                                      Expanded(
+                                        child: OutlinedButton.icon(
+                                          onPressed: viewData.customerUid == null
+                                              ? null
+                                              : () async {
+                                                  await OrderCallLauncher.startVoiceCall(
+                                                    context: context,
+                                                    peerUid: viewData.customerUid!,
+                                                    peerLabel:
+                                                        OrderCallLauncher.readCustomerLabel(
+                                                          viewData.orderData,
+                                                        ),
+                                                    orderData: viewData.orderData,
+                                                    phoneNumber: viewData.customerPhone,
+                                                    photoUrl:
+                                                        OrderCallLauncher.readCustomerPhotoUrl(
+                                                          viewData.orderData,
+                                                        ),
+                                                  );
+                                                },
+                                          icon: const Icon(Icons.phone_in_talk_outlined),
+                                          label: const Text('โทรลูกค้า'),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: OutlinedButton.icon(
+                                          onPressed: viewData.shopCoords == null
+                                              ? null
+                                              : () async {
+                                                  await RiderOrderActions.instance.openMap(
+                                                    viewData.shopCoords!['lat']!,
+                                                    viewData.shopCoords!['lng']!,
+                                                  );
+                                                },
+                                          icon: const Icon(Icons.place_outlined),
+                                          label: const Text('แผนที่จุดรับ'),
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: OutlinedButton.icon(
-                                    onPressed: isTravelOrder || viewData.shopOwnerUid == null
-                                        ? null
-                                        : () async {
-                                            await OrderCallLauncher.startVoiceCall(
-                                              context: context,
-                                              peerUid: viewData.shopOwnerUid!,
-                                              peerLabel: OrderCallLauncher.readShopLabel(
-                                                viewData.orderData,
-                                              ),
-                                              orderData: viewData.orderData,
-                                              phoneNumber: viewData.shopPhone,
-                                              photoUrl: OrderCallLauncher.readShopPhotoUrl(
-                                                viewData.orderData,
-                                              ),
-                                            );
-                                          },
-                                    icon: const Icon(Icons.support_agent_rounded),
-                                    label: Text(isTravelOrder ? 'โทรจุดรับ' : 'โทรร้านค้า'),
+                                  const SizedBox(height: 10),
+                                  Row(
+                                    children: <Widget>[
+                                      Expanded(
+                                        child: OutlinedButton.icon(
+                                          onPressed: viewData.customerUid == null
+                                              ? null
+                                              : () async {
+                                                  final myUid =
+                                                      FirebaseAuth.instance.currentUser?.uid;
+                                                  if (myUid != null) {
+                                                    ChatWarmupService.prefetchRoom(
+                                                      myUid: myUid,
+                                                      peerUid: viewData.customerUid!,
+                                                    );
+                                                  }
+                                                  await Navigator.of(context).push(
+                                                    MaterialPageRoute<void>(
+                                                      builder: (_) => RiderChatRoomScreen(
+                                                        peerUid: viewData.customerUid!,
+                                                        peerLabel: 'ลูกค้า',
+                                                        orderId: widget.orderId,
+                                                      ),
+                                                    ),
+                                                  );
+                                                },
+                                          icon: const Icon(Icons.chat_bubble_outline_rounded),
+                                          label: const Text('แชตลูกค้า'),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: OutlinedButton.icon(
+                                          onPressed: viewData.destinationCoords == null
+                                              ? null
+                                              : () async {
+                                                  await RiderOrderActions.instance
+                                                      .openCustomerMap(viewData.orderData);
+                                                },
+                                          icon: const Icon(Icons.map_outlined),
+                                          label: const Text('แผนที่ปลายทาง'),
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 10),
-                            Row(
-                              children: <Widget>[
-                                Expanded(
-                                  child: OutlinedButton.icon(
-                                    onPressed: viewData.customerUid == null
-                                        ? null
-                                        : () async {
-                                            final myUid =
-                                                FirebaseAuth.instance.currentUser?.uid;
-                                            if (myUid != null) {
-                                              ChatWarmupService.prefetchRoom(
-                                                myUid: myUid,
-                                                peerUid: viewData.customerUid!,
-                                              );
-                                            }
-                                            await Navigator.of(context).push(
-                                              MaterialPageRoute<void>(
-                                                builder: (_) => RiderChatRoomScreen(
-                                                  peerUid: viewData.customerUid!,
-                                                  peerLabel: 'ลูกค้า',
-                                                  orderId: widget.orderId,
-                                                ),
-                                              ),
-                                            );
-                                          },
-                                    icon: const Icon(Icons.chat_bubble_outline_rounded),
-                                    label: const Text('แชตลูกค้า'),
+                                ],
+                              )
+                            : Column(
+                                children: <Widget>[
+                                  Row(
+                                    children: <Widget>[
+                                      Expanded(
+                                        child: OutlinedButton.icon(
+                                          onPressed: viewData.customerUid == null
+                                              ? null
+                                              : () async {
+                                                  await OrderCallLauncher.startVoiceCall(
+                                                    context: context,
+                                                    peerUid: viewData.customerUid!,
+                                                    peerLabel:
+                                                        OrderCallLauncher.readCustomerLabel(
+                                                          viewData.orderData,
+                                                        ),
+                                                    orderData: viewData.orderData,
+                                                    phoneNumber: viewData.customerPhone,
+                                                    photoUrl:
+                                                        OrderCallLauncher.readCustomerPhotoUrl(
+                                                          viewData.orderData,
+                                                        ),
+                                                  );
+                                                },
+                                          icon: const Icon(Icons.phone_in_talk_outlined),
+                                          label: const Text('โทรลูกค้า'),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: OutlinedButton.icon(
+                                          onPressed: viewData.shopOwnerUid == null
+                                              ? null
+                                              : () async {
+                                                  await OrderCallLauncher.startVoiceCall(
+                                                    context: context,
+                                                    peerUid: viewData.shopOwnerUid!,
+                                                    peerLabel:
+                                                        OrderCallLauncher.readShopLabel(
+                                                          viewData.orderData,
+                                                        ),
+                                                    orderData: viewData.orderData,
+                                                    phoneNumber: viewData.shopPhone,
+                                                    photoUrl:
+                                                        OrderCallLauncher.readShopPhotoUrl(
+                                                          viewData.orderData,
+                                                        ),
+                                                  );
+                                                },
+                                          icon: const Icon(Icons.support_agent_rounded),
+                                          label: const Text('โทรร้านค้า'),
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: OutlinedButton.icon(
-                                    onPressed: isTravelOrder || viewData.shopOwnerUid == null
-                                        ? null
-                                        : () async {
-                                            final myUid =
-                                                FirebaseAuth.instance.currentUser?.uid;
-                                            if (myUid != null) {
-                                              ChatWarmupService.prefetchRoom(
-                                                myUid: myUid,
-                                                peerUid: viewData.shopOwnerUid!,
-                                              );
-                                            }
-                                            await Navigator.of(context).push(
-                                              MaterialPageRoute<void>(
-                                                builder: (_) => RiderChatRoomScreen(
-                                                  peerUid: viewData.shopOwnerUid!,
-                                                  peerLabel: 'ร้านค้า',
-                                                  orderId: widget.orderId,
-                                                ),
-                                              ),
-                                            );
-                                          },
-                                    icon: const Icon(Icons.storefront_outlined),
-                                    label: Text(isTravelOrder ? 'แชตจุดรับ' : 'แชตร้านค้า'),
+                                  const SizedBox(height: 10),
+                                  Row(
+                                    children: <Widget>[
+                                      Expanded(
+                                        child: OutlinedButton.icon(
+                                          onPressed: viewData.customerUid == null
+                                              ? null
+                                              : () async {
+                                                  final myUid =
+                                                      FirebaseAuth.instance.currentUser?.uid;
+                                                  if (myUid != null) {
+                                                    ChatWarmupService.prefetchRoom(
+                                                      myUid: myUid,
+                                                      peerUid: viewData.customerUid!,
+                                                    );
+                                                  }
+                                                  await Navigator.of(context).push(
+                                                    MaterialPageRoute<void>(
+                                                      builder: (_) => RiderChatRoomScreen(
+                                                        peerUid: viewData.customerUid!,
+                                                        peerLabel: 'ลูกค้า',
+                                                        orderId: widget.orderId,
+                                                      ),
+                                                    ),
+                                                  );
+                                                },
+                                          icon: const Icon(Icons.chat_bubble_outline_rounded),
+                                          label: const Text('แชตลูกค้า'),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: OutlinedButton.icon(
+                                          onPressed: viewData.shopOwnerUid == null
+                                              ? null
+                                              : () async {
+                                                  final myUid =
+                                                      FirebaseAuth.instance.currentUser?.uid;
+                                                  if (myUid != null) {
+                                                    ChatWarmupService.prefetchRoom(
+                                                      myUid: myUid,
+                                                      peerUid: viewData.shopOwnerUid!,
+                                                    );
+                                                  }
+                                                  await Navigator.of(context).push(
+                                                    MaterialPageRoute<void>(
+                                                      builder: (_) => RiderChatRoomScreen(
+                                                        peerUid: viewData.shopOwnerUid!,
+                                                        peerLabel: 'ร้านค้า',
+                                                        orderId: widget.orderId,
+                                                      ),
+                                                    ),
+                                                  );
+                                                },
+                                          icon: const Icon(Icons.storefront_outlined),
+                                          label: const Text('แชตร้านค้า'),
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
+                                ],
+                              ),
                       ),
                       const SizedBox(height: 10),
                       _SectionCard(
                         title: detailSectionTitle,
-                        child: Column(
-                          children: products.isEmpty
-                              ? const <Widget>[
-                                  Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: Text('ไม่พบรายละเอียดสินค้า'),
-                                  ),
-                                ]
-                              : products
-                                  .map((product) => _ProductTile(product: product))
-                                  .toList(growable: false),
-                        ),
+                        child: isTravelOrder
+                            ? _TravelOrderSummary(viewData: viewData)
+                            : Column(
+                                children: products.isEmpty
+                                    ? const <Widget>[
+                                        Align(
+                                          alignment: Alignment.centerLeft,
+                                          child: Text('ไม่พบรายละเอียดสินค้า'),
+                                        ),
+                                      ]
+                                    : products
+                                        .map((product) => _ProductTile(product: product))
+                                        .toList(growable: false),
+                              ),
                       ),
                     ],
                   ),
@@ -590,6 +734,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
       destinationLabel: _readDestinationLabel(data),
         pickupLabel: _readPickupLabel(data),
         vehicleTypeLabel: _readTravelVehicleLabel(data),
+        travelVehicleType: readTravelVehicleTypeFromOrder(data),
         scheduleLabel: _readTravelScheduleLabel(data),
       shopCoords: shopCoords,
       shopImageUrl: shopImageUrl,
@@ -666,41 +811,10 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
       if (!mounted) return;
       setState(() => _isSubmitting = true);
 
-      await FirebaseFirestore.instance.runTransaction((transaction) async {
-        final freshSnap = await transaction.get(orderRef);
-        final freshData = freshSnap.data() ?? <String, dynamic>{};
-        final status = (freshData['status'] as String?)?.trim() ?? '';
-        if (status.isNotEmpty && status != 'pending' && status != 'awaiting_rider') {
-          throw StateError('ออเดอร์นี้ไม่อยู่ในสถานะรอรับงานแล้ว (สถานะ: $status)');
-        }
-
-        final driverId = (freshData['driverId'] as String?)?.trim();
-        if (driverId != null && driverId.isNotEmpty && driverId != currentUid) {
-          throw StateError('ออเดอร์นี้ถูกจองโดยไรเดอร์คนอื่นแล้ว');
-        }
-
-        final needsHold = isPayAtDestinationOrder(freshData);
-        final holdAmount = needsHold ? resolvePayAtDestinationHoldAmount(freshData) : 0.0;
-
-        if (needsHold && holdAmount > 0) {
-          final creditDocId = 'order_pay_at_destination_${widget.orderId}_$currentUid';
-          final creditRef = FirebaseFirestore.instance.collection('credits').doc(creditDocId);
-          transaction.set(creditRef, {
-            'uid': currentUid,
-            'amount': -holdAmount,
-            'timestamp': FieldValue.serverTimestamp(),
-            'type': 'order_pay_at_destination_hold',
-            'orderId': widget.orderId,
-            'source': 'rider_accept_order',
-          });
-        }
-
-        transaction.update(orderRef, {
-          'status': 'accepted',
-          'driverId': currentUid,
-          'acceptedAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-southeast1')
+          .httpsCallable('acceptRiderOrder');
+      await callable.call(<String, dynamic>{
+        'orderId': widget.orderId,
       });
 
       // Push พิกัดตอนรับงาน (action)
@@ -709,19 +823,25 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
         source: 'order_accepted',
       ));
 
-      await _sendOrderAppNotification(
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('รับงานเรียบร้อย')),
+      );
+
+      unawaited(_sendOrderAppNotification(
         targetApp: 'van1',
         recipientUid: _readTrimmedString(data['shopOwnerId']),
         orderId: widget.orderId,
         title: 'ไรเดอร์รับงานแล้ว',
         body: 'ออเดอร์${_orderCodeSuffix(data)} มีไรเดอร์รับงานแล้ว',
         action: 'order_accepted',
-      );
-
+      ));
+      return;
+    } on FirebaseFunctionsException catch (error) {
       if (!mounted) return;
-      Navigator.of(context).pop(true);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('รับงานเรียบร้อย')),
+        SnackBar(content: Text(error.message ?? 'รับงานไม่สำเร็จ')),
       );
     } catch (error) {
       if (!mounted) return;
@@ -745,38 +865,62 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
       final orderRef = FirebaseFirestore.instance.collection('orders').doc(widget.orderId);
       final orderSnap = await orderRef.get();
       final data = orderSnap.data() ?? <String, dynamic>{};
+      final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+      final driverId = _readTrimmedString(data['driverId']) ?? '';
+      final status = _readTrimmedString(data['status']) ?? '';
 
-      await orderRef.update({
-        'status': 'awaiting_rider',
-        'statusLabel': 'awaiting_nearest_rider',
-        'driverId': null,
-        'assignedRiderAt': null,
-        'rejectedByDriverAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
+      if (driverId.isNotEmpty &&
+          currentUid.isNotEmpty &&
+          driverId != currentUid) {
+        if (!mounted) return;
+        Navigator.of(context).pop(false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ออเดอร์นี้ถูกรับโดยไรเดอร์คนอื่นแล้ว')),
+        );
+        return;
+      }
+
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-southeast1')
+          .httpsCallable('rejectRiderOrder');
+      await callable.call(<String, dynamic>{
+        'orderId': widget.orderId,
       });
 
-      await _sendOrderAppNotification(
+      if (!mounted) return;
+      Navigator.of(context).pop(false);
+
+      unawaited(_sendOrderAppNotification(
         targetApp: 'van2',
         recipientUid: _readTrimmedString(data['customerId']),
         orderId: widget.orderId,
         title: 'กำลังหาไรเดอร์ใหม่',
         body: 'ไรเดอร์ปฏิเสธงาน ระบบกำลังค้นหาไรเดอร์ให้ใหม่',
         action: 'order_rejected',
-      );
+      ));
 
-      await _sendOrderAppNotification(
+      unawaited(_sendOrderAppNotification(
         targetApp: 'van1',
         recipientUid: _readTrimmedString(data['shopOwnerId']),
         orderId: widget.orderId,
         title: 'ไรเดอร์ปฏิเสธงาน',
         body: 'ออเดอร์${_orderCodeSuffix(data)} ไรเดอร์ปฏิเสธงาน ระบบกำลังหาไรเดอร์ใหม่',
         action: 'order_rejected',
-      );
+      ));
 
       if (!mounted) return;
-      Navigator.of(context).pop(false);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('ไม่รับงานแล้ว ระบบจะหาคนขับคนอื่นต่อ')),
+        SnackBar(
+          content: Text(
+            status == 'accepted'
+                ? 'ยกเลิกการรับงานแล้ว ระบบจะหาคนขับคนอื่นต่อ'
+                : 'ไม่รับงานแล้ว ระบบจะหาคนขับคนอื่นต่อ',
+          ),
+        ),
+      );
+    } on FirebaseFunctionsException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message ?? 'อัปเดตสถานะไม่สำเร็จ')),
       );
     } catch (error) {
       if (!mounted) return;
@@ -840,6 +984,17 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
   }
 
   String _readDestinationLabel(Map<String, dynamic> data) {
+    final travelRequest = data['travelRequest'];
+    if (travelRequest is Map<String, dynamic>) {
+      final destination = travelRequest['destination'];
+      if (destination is Map<String, dynamic>) {
+        final label = _readTrimmedString(destination['title']);
+        if (label != null && label.isNotEmpty) {
+          return label;
+        }
+      }
+    }
+
     final delivery = data['deliverySnapshot'];
     if (delivery is Map<String, dynamic>) {
       final label = _readTrimmedString(delivery['locationLabel']);
@@ -936,6 +1091,17 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
       if (customer is Map<String, dynamic>) {
         lat = _toDouble(customer['latitude']);
         lng = _toDouble(customer['longitude']);
+      }
+    }
+
+    if (lat == null || lng == null) {
+      final travelRequest = data['travelRequest'];
+      if (travelRequest is Map<String, dynamic>) {
+        final destination = travelRequest['destination'];
+        if (destination is Map<String, dynamic>) {
+          lat = _toDouble(destination['latitude']) ?? _toDouble(destination['lat']);
+          lng = _toDouble(destination['longitude']) ?? _toDouble(destination['lng']);
+        }
       }
     }
 
@@ -1295,6 +1461,7 @@ class _IncomingOrderViewData {
     required this.destinationLabel,
     required this.pickupLabel,
     required this.vehicleTypeLabel,
+    required this.travelVehicleType,
     required this.scheduleLabel,
     required this.shopCoords,
     required this.shopImageUrl,
@@ -1315,6 +1482,7 @@ class _IncomingOrderViewData {
       destinationLabel: '-',
       pickupLabel: '-',
       vehicleTypeLabel: null,
+      travelVehicleType: TravelVehicleType.motorcycle,
       scheduleLabel: null,
       shopCoords: null,
       shopImageUrl: null,
@@ -1334,6 +1502,7 @@ class _IncomingOrderViewData {
   final String destinationLabel;
   final String pickupLabel;
   final String? vehicleTypeLabel;
+  final TravelVehicleType travelVehicleType;
   final String? scheduleLabel;
   final Map<String, double>? shopCoords;
   final String? shopImageUrl;
@@ -1419,6 +1588,113 @@ class _InfoChip extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _TravelOrderSummary extends StatelessWidget {
+  const _TravelOrderSummary({required this.viewData});
+
+  final _IncomingOrderViewData viewData;
+
+  @override
+  Widget build(BuildContext context) {
+    final travelRequest = viewData.orderData['travelRequest'];
+    double? distanceKm;
+    if (travelRequest is Map<String, dynamic>) {
+      distanceKm = _toDoubleStatic(travelRequest['distanceKm']);
+    }
+
+    final note = viewData.products
+        .map((product) => product.note.trim())
+        .firstWhere(
+          (value) => value.isNotEmpty,
+          orElse: () => '',
+        );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0xFFEFF6FF),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFBFDBFE)),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const Icon(Icons.directions_bike_outlined, color: Color(0xFF2563EB)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  '${viewData.pickupLabel} → ${viewData.destinationLabel}',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF1D4ED8),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (distanceKm != null && distanceKm > 0) ...<Widget>[
+          const SizedBox(height: 10),
+          Text(
+            'ระยะทางโดยประมาณ: ${distanceKm.toStringAsFixed(2)} km',
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+        ],
+        if (note.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 10),
+          Text(
+            note,
+            style: const TextStyle(color: Color(0xFF4B5563)),
+          ),
+        ],
+        const SizedBox(height: 10),
+        Text(
+          'ค่าโดยสาร: THB ${viewData.total.toStringAsFixed(1)}',
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+        ),
+      ],
+    );
+  }
+}
+
+double? _toDoubleStatic(dynamic value) {
+  if (value is num) {
+    return value.toDouble();
+  }
+  if (value is String) {
+    return double.tryParse(value.trim());
+  }
+  return null;
+}
+
+class _OrderAvatar extends StatelessWidget {
+  const _OrderAvatar({
+    required this.imageUrl,
+    required this.isTravelOrder,
+    required this.travelVehicleType,
+  });
+
+  final String? imageUrl;
+  final bool isTravelOrder;
+  final TravelVehicleType travelVehicleType;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isTravelOrder) {
+      return TravelOrderAvatar(
+        vehicleType: travelVehicleType,
+        size: 56,
+        borderRadius: 16,
+      );
+    }
+
+    return _ShopAvatar(imageUrl: imageUrl);
   }
 }
 

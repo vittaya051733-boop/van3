@@ -1,0 +1,10 @@
+# Copy to key.properties and fill in before Play Store release build.
+# Do NOT commit key.properties (already in .gitignore).
+
+storePassword=YOUR_KEYSTORE_PASSWORD
+keyPassword=YOUR_KEY_PASSWORD
+keyAlias=van3-upload
+storeFile=../van3-upload-keystore.jks
+
+# Generate keystore (one-time):
+# keytool -genkey -v -keystore van3-upload-keystore.jks -keyalg RSA -keysize 2048 -validity 10000 -alias van3-upload

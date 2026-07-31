@@ -3,11 +3,13 @@ import 'dart:io';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'data/legal_content.dart';
 import 'legal_document_screen.dart';
+import 'services/rider_auth_sign_out.dart';
 import 'services/rider_registration_service.dart';
 import 'utils/app_colors.dart';
 
@@ -44,6 +46,7 @@ class _RiderRegistrationScreenState extends State<RiderRegistrationScreen> {
 
   int _step = 0;
   bool _submitting = false;
+  bool _pickingImage = false;
   bool _acceptedPrivacy = false;
   bool _pushOptIn = false;
   String? _selectedBank;
@@ -80,14 +83,33 @@ class _RiderRegistrationScreenState extends State<RiderRegistrationScreen> {
   }
 
   Future<void> _pickImage(void Function(File file) assign) async {
-    final picked = await _imagePicker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 85,
-    );
-    if (picked == null) {
+    if (_pickingImage) {
       return;
     }
-    setState(() => assign(File(picked.path)));
+    setState(() => _pickingImage = true);
+    try {
+      final picked = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 85,
+      );
+      if (picked == null || !mounted) {
+        return;
+      }
+      setState(() => assign(File(picked.path)));
+    } on PlatformException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      if (error.code == 'already_active') {
+        _showSnack('กรุณารอให้หน้าต่างเลือกรูปปิดก่อน แล้วลองใหม่');
+      } else {
+        _showSnack('เลือกรูปไม่สำเร็จ: ${error.message ?? error.code}');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _pickingImage = false);
+      }
+    }
   }
 
   Future<String> _uploadImage(File file, String label) async {
@@ -218,9 +240,21 @@ class _RiderRegistrationScreenState extends State<RiderRegistrationScreen> {
                 child: Image.file(file, width: 48, height: 48, fit: BoxFit.cover),
               ),
         title: Text(title),
-        subtitle: Text(file == null ? 'ยังไม่ได้เลือกรูป' : 'เลือกแล้ว'),
-        trailing: const Icon(Icons.chevron_right_rounded),
-        onTap: onPick,
+        subtitle: Text(
+          _pickingImage
+              ? 'กำลังเปิดคลังรูป...'
+              : file == null
+              ? 'ยังไม่ได้เลือกรูป'
+              : 'เลือกแล้ว',
+        ),
+        trailing: _pickingImage
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.chevron_right_rounded),
+        onTap: _pickingImage ? null : onPick,
       ),
     );
   }
@@ -631,7 +665,7 @@ class _RiderRegistrationPendingScreenState
             const SizedBox(height: 24),
             OutlinedButton(
               onPressed: () async {
-                await FirebaseAuth.instance.signOut();
+                await RiderAuthSignOut.signOut();
                 if (context.mounted) {
                   Navigator.of(context).pushNamedAndRemoveUntil('/welcome', (_) => false);
                 }

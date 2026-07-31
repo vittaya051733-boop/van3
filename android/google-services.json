@@ -3,7 +3,7 @@
     "project_number": "802503541368",
     "firebase_url": "https://van-merchant-default-rtdb.asia-southeast1.firebasedatabase.app",
     "project_id": "van-merchant",
-    "storage_bucket": "van-merchant-van3-storage-802503541368"
+    "storage_bucket": "van-merchant.firebasestorage.app"
   },
   "client": [
     {

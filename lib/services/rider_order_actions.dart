@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
@@ -11,7 +12,6 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../driver_scanner_screen.dart';
 import '../utils/order_pay_at_destination.dart';
-import '../utils/settlement_payout_support.dart';
 import '../utils/shop_location_resolver.dart';
 import '../utils/upload_image_compressor.dart';
 import 'rider_location_pusher.dart';
@@ -166,27 +166,7 @@ class RiderOrderActions {
         return false;
       }
 
-      final now = Timestamp.now();
       final grossShippingFee = await resolveShippingFee(orderData);
-      final deliverySnapshot = buildDeliveryFinancialSnapshot(
-        orderData: orderData,
-        grossShippingFee: grossShippingFee,
-        completedAt: now,
-        completedSource: 'photo_proof',
-      );
-      final deliveredOrderData = <String, dynamic>{
-        ...orderData,
-        ...deliverySnapshot,
-        'status': 'delivered',
-      };
-      final riderNetAmount = resolveRiderPayoutAmount(deliveredOrderData);
-      final shopNetAmount = resolveShopPayoutAmount(orderData);
-      final settlementPatch = buildPendingSettlementPatch(
-        orderData: orderData,
-        riderNetAmount: riderNetAmount,
-        shopNetAmount: shopNetAmount,
-        now: now,
-      );
       final storagePath =
           'riders/$currentUid/delivery_proofs/$orderId/${DateTime.now().millisecondsSinceEpoch}_${compressed.fileName}';
       final storageRef = FirebaseStorage.instance.ref().child(storagePath);
@@ -201,45 +181,16 @@ class RiderOrderActions {
         (orderData['riderName'] as String?)?.trim(),
       );
 
-      final orderRef = FirebaseFirestore.instance.collection('orders').doc(orderId);
-      await FirebaseFirestore.instance.runTransaction((transaction) async {
-        releasePayAtDestinationHold(
-          transaction: transaction,
-          orderId: orderId,
-          riderUid: currentUid,
-          releaseAmount: isPayAtDestinationOrder(orderData)
-              ? resolvePayAtDestinationCreditReleaseAmount(
-                  orderData,
-                  grossShippingFee: grossShippingFee,
-                )
-              : 0,
-          completedSource: 'photo_proof',
-        );
-
-        transaction.update(orderRef, {
-          'status': 'delivered',
-          'deliveredAt': now,
-          'updatedAt': now,
-          ...deliverySnapshot,
-          ...settlementPatch,
-          'deliveryProofImageUrl': proofUrl,
-          'deliveryProofStoragePath': storagePath,
-          'deliveryProofCapturedAt': now,
-          'deliveryProofCapturedById': currentUid,
-          'deliveryProofCapturedByName': capturedByName,
-        });
+      await FirebaseFunctions.instanceFor(region: 'asia-southeast1')
+          .httpsCallable('completeRiderDelivery')
+          .call(<String, dynamic>{
+        'orderId': orderId,
+        'completedSource': 'photo_proof',
+        'grossShippingFee': grossShippingFee,
+        'deliveryProofImageUrl': proofUrl,
+        'deliveryProofStoragePath': storagePath,
+        'deliveryProofCapturedByName': capturedByName,
       });
-
-      if (riderNetAmount > 0 || shopNetAmount > 0) {
-        unawaited(
-          enqueuePayoutPendingNotifications(
-            orderId: orderId,
-            orderData: orderData,
-            riderNetAmount: riderNetAmount,
-            shopNetAmount: shopNetAmount,
-          ),
-        );
-      }
 
       unawaited(
         RiderLocationPusher.pushOnce(
@@ -272,6 +223,256 @@ class RiderOrderActions {
     }
   }
 
+  Future<bool> markTravelPickupArrived(
+    BuildContext context, {
+    required String orderId,
+    required Map<String, dynamic> orderData,
+  }) {
+    return _updateTravelStatus(
+      context,
+      orderId: orderId,
+      orderData: orderData,
+      expectedStatus: 'accepted',
+      nextStatus: 'ready',
+      pickupArrived: true,
+      locationSource: 'travel_pickup_arrived',
+      successMessage:
+          'บันทึกถึงจุดรับแล้ว — กด "เริ่มเดินทาง" เมื่อผู้โดยสารขึ้นรถ',
+    );
+  }
+
+  Future<bool> startTravelTrip(
+    BuildContext context, {
+    required String orderId,
+    required Map<String, dynamic> orderData,
+  }) {
+    return _updateTravelStatus(
+      context,
+      orderId: orderId,
+      orderData: orderData,
+      expectedStatus: 'ready',
+      nextStatus: 'delivering',
+      startDelivery: true,
+      locationSource: 'travel_trip_started',
+      successMessage:
+          'เริ่มเดินทางแล้ว — กด "ถึงจุดหมายปลายทาง" เมื่อส่งผู้โดยสารถึงที่หมาย',
+    );
+  }
+
+  Future<bool> completeTravelAtDestination(
+    BuildContext context, {
+    required String orderId,
+    required Map<String, dynamic> orderData,
+  }) async {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    final currentUid = currentUser?.uid;
+    if (currentUid == null || currentUid.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('กรุณาเข้าสู่ระบบใหม่')),
+        );
+      }
+      return false;
+    }
+
+    final status = (orderData['status'] as String?)?.trim() ?? '';
+    final driverId = (orderData['driverId'] as String?)?.trim();
+    if (driverId != null && driverId.isNotEmpty && driverId != currentUid) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ออเดอร์นี้ไม่ได้รับโดยคุณ')),
+        );
+      }
+      return false;
+    }
+
+    if (status != 'delivering') {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('ไม่สามารถปิดงานได้ในสถานะ $status')),
+        );
+      }
+      return false;
+    }
+
+    final confirmed = await _confirmTravelDestinationComplete(context, orderData);
+    if (!confirmed) {
+      return false;
+    }
+
+    try {
+      final grossShippingFee = await resolveTravelFare(orderData);
+      await FirebaseFunctions.instanceFor(region: 'asia-southeast1')
+          .httpsCallable('completeRiderDelivery')
+          .call(<String, dynamic>{
+        'orderId': orderId,
+        'completedSource': 'travel_destination',
+        'grossShippingFee': grossShippingFee,
+      });
+
+      unawaited(
+        RiderLocationPusher.pushOnce(
+          uid: currentUid,
+          source: 'travel_destination_complete',
+        ),
+      );
+
+      if (context.mounted) {
+        final isCod = isPayAtDestinationOrder(orderData);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              isCod
+                  ? 'ส่งผู้โดยสารถึงจุดหมายแล้ว (จ่ายปลายทาง — ไม่โอนเข้ากระเป๋า)'
+                  : 'ส่งผู้โดยสารถึงจุดหมายแล้ว — รอระบบโอนค่าโดยสารหลังหัก GP ตามที่แอดมินกำหนด',
+            ),
+          ),
+        );
+      }
+      return true;
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('ปิดงานไม่สำเร็จ: $error')),
+        );
+      }
+      return false;
+    }
+  }
+
+  Future<bool> _updateTravelStatus(
+    BuildContext context, {
+    required String orderId,
+    required Map<String, dynamic> orderData,
+    required String expectedStatus,
+    required String nextStatus,
+    required String locationSource,
+    required String successMessage,
+    bool pickupArrived = false,
+    bool startDelivery = false,
+  }) async {
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUid == null || currentUid.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('กรุณาเข้าสู่ระบบใหม่')),
+        );
+      }
+      return false;
+    }
+
+    final status = (orderData['status'] as String?)?.trim() ?? '';
+    final driverId = (orderData['driverId'] as String?)?.trim();
+    if (driverId != null && driverId.isNotEmpty && driverId != currentUid) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ออเดอร์นี้ไม่ได้รับโดยคุณ')),
+        );
+      }
+      return false;
+    }
+
+    if (status != expectedStatus) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('ไม่สามารถอัปเดตได้ในสถานะ $status')),
+        );
+      }
+      return false;
+    }
+
+    try {
+      final update = <String, dynamic>{
+        'status': nextStatus,
+        'driverId': currentUid,
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+      if (pickupArrived) {
+        update['pickupArrivedAt'] = FieldValue.serverTimestamp();
+      }
+      if (startDelivery) {
+        update['deliveryStartTime'] = FieldValue.serverTimestamp();
+      }
+
+      await FirebaseFirestore.instance.collection('orders').doc(orderId).update(update);
+      unawaited(
+        RiderLocationPusher.pushOnce(uid: currentUid, source: locationSource),
+      );
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(successMessage)),
+        );
+      }
+      return true;
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('อัปเดตสถานะไม่สำเร็จ: $error')),
+        );
+      }
+      return false;
+    }
+  }
+
+  Future<bool> _confirmTravelDestinationComplete(
+    BuildContext context,
+    Map<String, dynamic> orderData,
+  ) async {
+    final isCod = isPayAtDestinationOrder(orderData);
+    final fare = await resolveTravelFare(orderData);
+    if (!context.mounted) {
+      return false;
+    }
+    final fareLabel = fare > 0 ? fare.toStringAsFixed(1) : '-';
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('ยืนยันถึงจุดหมายปลายทาง'),
+          content: Text(
+            isCod
+                ? 'ยืนยันว่าส่งผู้โดยสารถึงปลายทางแล้ว\n'
+                    'การชำระ: จ่ายปลายทาง (รับเงินสด $fareLabel บาทจากลูกค้า)\n'
+                    'ระบบจะไม่โอนเงินเข้ากระเป๋าไรเดอร์'
+                : 'ยืนยันว่าส่งผู้โดยสารถึงปลายทางแล้ว\n'
+                    'ค่าโดยสาร $fareLabel บาท จะรอโอนให้หลังหัก GP ตามที่แอดมินกำหนด',
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('ยกเลิก'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('ยืนยันถึงปลายทาง'),
+            ),
+          ],
+        );
+      },
+    );
+
+    return result == true;
+  }
+
+  Future<double> resolveTravelFare(Map<String, dynamic> data) async {
+    final travelRequest = data['travelRequest'];
+    if (travelRequest is Map) {
+      final fare = _toDouble(travelRequest['fare']);
+      if (fare != null && fare > 0) {
+        return fare;
+      }
+    }
+
+    final grandTotal = _toDouble(data['grandTotal']);
+    if (grandTotal != null && grandTotal > 0) {
+      return grandTotal;
+    }
+
+    return resolveShippingFee(data);
+  }
+
   Future<Map<String, double>?> resolveShopCoordinates(
     Map<String, dynamic> data,
   ) {
@@ -296,6 +497,17 @@ class RiderOrderActions {
       if (customer is Map<String, dynamic>) {
         lat = _toDouble(customer['latitude']) ?? _toDouble(customer['lat']);
         lng = _toDouble(customer['longitude']) ?? _toDouble(customer['lng']);
+      }
+    }
+
+    if (lat == null || lng == null) {
+      final travelRequest = data['travelRequest'];
+      if (travelRequest is Map<String, dynamic>) {
+        final destination = travelRequest['destination'];
+        if (destination is Map<String, dynamic>) {
+          lat = _toDouble(destination['latitude']) ?? _toDouble(destination['lat']);
+          lng = _toDouble(destination['longitude']) ?? _toDouble(destination['lng']);
+        }
       }
     }
 

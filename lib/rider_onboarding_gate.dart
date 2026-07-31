@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'rider_registration_screen.dart';
+import 'services/rider_auth_sign_out.dart';
 import 'services/rider_registration_service.dart';
 
 class RiderOnboardingGate extends StatefulWidget {
@@ -17,7 +18,10 @@ class RiderOnboardingGate extends StatefulWidget {
 }
 
 class _RiderOnboardingGateState extends State<RiderOnboardingGate> {
+  static const Duration _loadTimeout = Duration(seconds: 15);
+
   StreamSubscription<RiderAccessStatus>? _statusSubscription;
+  Timer? _loadTimeoutTimer;
   bool _loading = true;
   RiderAccessStatus? _status;
   String? _rejectReason;
@@ -31,8 +35,23 @@ class _RiderOnboardingGateState extends State<RiderOnboardingGate> {
 
   @override
   void dispose() {
+    _loadTimeoutTimer?.cancel();
     _statusSubscription?.cancel();
     super.dispose();
+  }
+
+  void _startLoadTimeout() {
+    _loadTimeoutTimer?.cancel();
+    _loadTimeoutTimer = Timer(_loadTimeout, () {
+      if (!mounted || !_loading) {
+        return;
+      }
+      setState(() {
+        _loading = false;
+        _loadError =
+            'โหลดสถานะไรเดอร์ใช้เวลานานเกินไป กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตแล้วลองใหม่';
+      });
+    });
   }
 
   void _listenForAccessChanges() {
@@ -46,12 +65,18 @@ class _RiderOnboardingGateState extends State<RiderOnboardingGate> {
     }
 
     _statusSubscription?.cancel();
+    setState(() {
+      _loading = true;
+      _loadError = null;
+    });
+    _startLoadTimeout();
     _statusSubscription =
         RiderRegistrationService.watchAccessStatus(uid).listen(
       (status) {
         if (!mounted) {
           return;
         }
+        _loadTimeoutTimer?.cancel();
         setState(() {
           _loading = false;
           _status = status;
@@ -68,12 +93,31 @@ class _RiderOnboardingGateState extends State<RiderOnboardingGate> {
         if (!mounted) {
           return;
         }
+        _loadTimeoutTimer?.cancel();
         setState(() {
           _loading = false;
-          _loadError = error.toString();
+          _loadError = _formatLoadError(error);
         });
       },
     );
+  }
+
+  String _formatLoadError(Object error) {
+    if (error is FirebaseException) {
+      if (error.code == 'permission-denied') {
+        return 'ไม่สามารถอ่านสถานะไรเดอร์ได้ (permission-denied) กรุณาติดต่อแอดมิน';
+      }
+      return 'โหลดสถานะไรเดอร์ไม่สำเร็จ (${error.code})';
+    }
+    return error.toString();
+  }
+
+  Future<void> _signOut() async {
+    await RiderAuthSignOut.signOut();
+    if (!mounted) {
+      return;
+    }
+    Navigator.of(context).pushNamedAndRemoveUntil('/welcome', (_) => false);
   }
 
   Future<void> _loadRejectReason(String uid) async {
@@ -128,6 +172,11 @@ class _RiderOnboardingGateState extends State<RiderOnboardingGate> {
                     _listenForAccessChanges();
                   },
                   child: const Text('ลองอีกครั้ง'),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton(
+                  onPressed: _signOut,
+                  child: const Text('ออกจากระบบ'),
                 ),
               ],
             ),

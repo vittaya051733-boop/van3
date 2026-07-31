@@ -10,6 +10,106 @@ enum RiderAccessStatus {
   needsRegistration,
 }
 
+class RiderProfileData {
+  const RiderProfileData({
+    this.displayName,
+    this.phoneNumber,
+    this.contactEmail,
+    this.bankName,
+    this.accountNumber,
+    this.accountOwner,
+    this.driverLicenseImageUrl,
+    this.motorcycleImageUrl,
+    this.bookBankImageUrl,
+    this.profilePhotoUrl,
+    this.vehicleType,
+    this.licensePlate,
+    this.vehicleColor,
+    this.vehicleBrandModel,
+    this.isElectricVehicle = false,
+    this.pushOptIn = false,
+    this.registrationStatus,
+  });
+
+  final String? displayName;
+  final String? phoneNumber;
+  final String? contactEmail;
+  final String? bankName;
+  final String? accountNumber;
+  final String? accountOwner;
+  final String? driverLicenseImageUrl;
+  final String? motorcycleImageUrl;
+  final String? bookBankImageUrl;
+  final String? profilePhotoUrl;
+  final String? vehicleType;
+  final String? licensePlate;
+  final String? vehicleColor;
+  final String? vehicleBrandModel;
+  final bool isElectricVehicle;
+  final bool pushOptIn;
+  final String? registrationStatus;
+
+  /// Fields van2 travel page reads from `riders/{uid}`.
+  bool get isCompleteForCustomerTravel {
+    return _nonEmpty(profilePhotoUrl) &&
+        _nonEmpty(vehicleType) &&
+        _nonEmpty(licensePlate) &&
+        _nonEmpty(vehicleColor) &&
+        _nonEmpty(vehicleBrandModel);
+  }
+
+  static bool _nonEmpty(String? value) => value?.trim().isNotEmpty == true;
+
+  static RiderProfileData fromMap(Map<String, dynamic>? map) {
+    final data = map ?? const <String, dynamic>{};
+    return RiderProfileData(
+      displayName: data['displayName']?.toString().trim(),
+      phoneNumber: (data['phoneNumber'] ?? data['phone'])?.toString().trim(),
+      contactEmail: (data['contactEmail'] ?? data['email'])?.toString().trim(),
+      bankName: data['bankName']?.toString().trim(),
+      accountNumber: data['accountNumber']?.toString().trim(),
+      accountOwner: (data['accountOwner'] ?? data['accountName'])
+          ?.toString()
+          .trim(),
+      driverLicenseImageUrl: data['driverLicenseImageUrl']?.toString().trim(),
+      motorcycleImageUrl: data['motorcycleImageUrl']?.toString().trim(),
+      bookBankImageUrl: data['bookBankImageUrl']?.toString().trim(),
+      profilePhotoUrl: _readPhotoUrl(data),
+      vehicleType: data['vehicleType']?.toString().trim(),
+      licensePlate: data['licensePlate']?.toString().trim(),
+      vehicleColor: data['vehicleColor']?.toString().trim(),
+      vehicleBrandModel: data['vehicleBrandModel']?.toString().trim(),
+      isElectricVehicle: data['isElectricVehicle'] == true,
+      pushOptIn: data['pushOptIn'] == true,
+      registrationStatus: data['registrationStatus']?.toString(),
+    );
+  }
+
+  static String? _readPhotoUrl(Map<String, dynamic> map) {
+    for (final key in <String>['profilePhotoUrl', 'photoUrl', 'imageUrl']) {
+      final value = map[key]?.toString().trim();
+      if (value != null && value.isNotEmpty) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  static Map<String, dynamic> mergeMaps(
+    Map<String, dynamic>? primary,
+    Map<String, dynamic>? secondary,
+  ) {
+    final merged = <String, dynamic>{};
+    if (secondary != null) {
+      merged.addAll(secondary);
+    }
+    if (primary != null) {
+      merged.addAll(primary);
+    }
+    return merged;
+  }
+}
+
 class RiderRegistrationService {
   RiderRegistrationService._();
 
@@ -69,7 +169,7 @@ class RiderRegistrationService {
 
     final hasBank = _hasBankProfile(riderData);
     if (rider != null && rider.exists && hasBank && riderStatus == null) {
-      return RiderAccessStatus.approved;
+      return RiderAccessStatus.pending;
     }
     return RiderAccessStatus.needsRegistration;
   }
@@ -209,6 +309,99 @@ class RiderRegistrationService {
     final registrationRef =
         FirebaseFirestore.instance.collection(collection).doc(user.uid);
     final riderRef = FirebaseFirestore.instance.collection('riders').doc(user.uid);
+    batch.set(registrationRef, payload, SetOptions(merge: true));
+    batch.set(riderRef, payload, SetOptions(merge: true));
+    await batch.commit();
+  }
+
+  static Future<RiderProfileData> fetchProfile(String uid) async {
+    DocumentSnapshot<Map<String, dynamic>>? registration;
+    DocumentSnapshot<Map<String, dynamic>>? rider;
+
+    try {
+      registration = await FirebaseFirestore.instance
+          .collection(collection)
+          .doc(uid)
+          .get();
+    } catch (_) {
+      registration = null;
+    }
+
+    try {
+      rider = await FirebaseFirestore.instance.collection('riders').doc(uid).get();
+    } catch (_) {
+      rider = null;
+    }
+
+    final merged = RiderProfileData.mergeMaps(
+      rider?.data(),
+      registration?.data(),
+    );
+    return RiderProfileData.fromMap(merged);
+  }
+
+  static Future<void> updateProfile({
+    required String uid,
+    required String displayName,
+    required String phoneNumber,
+    String? bankName,
+    String? accountNumber,
+    String? accountOwner,
+    String? driverLicenseImageUrl,
+    String? motorcycleImageUrl,
+    String? bookBankImageUrl,
+    String? profilePhotoUrl,
+    String? vehicleType,
+    String? licensePlate,
+    String? vehicleColor,
+    String? vehicleBrandModel,
+    bool? isElectricVehicle,
+    bool? pushOptIn,
+    String? registrationStatus,
+  }) async {
+    final payload = <String, dynamic>{
+      'uid': uid,
+      'displayName': displayName.trim(),
+      'phoneNumber': phoneNumber.trim(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+
+    void putIfNonEmpty(String key, String? value) {
+      final trimmed = value?.trim();
+      if (trimmed != null && trimmed.isNotEmpty) {
+        payload[key] = trimmed;
+      }
+    }
+
+    putIfNonEmpty('bankName', bankName);
+    putIfNonEmpty('accountNumber', accountNumber);
+    putIfNonEmpty('accountOwner', accountOwner);
+    if (accountOwner?.trim().isNotEmpty == true) {
+      payload['accountName'] = accountOwner!.trim();
+    }
+    putIfNonEmpty('driverLicenseImageUrl', driverLicenseImageUrl);
+    putIfNonEmpty('motorcycleImageUrl', motorcycleImageUrl);
+    putIfNonEmpty('bookBankImageUrl', bookBankImageUrl);
+    putIfNonEmpty('profilePhotoUrl', profilePhotoUrl);
+    if (profilePhotoUrl?.trim().isNotEmpty == true) {
+      payload['photoUrl'] = profilePhotoUrl!.trim();
+    }
+    putIfNonEmpty('vehicleType', vehicleType);
+    putIfNonEmpty('licensePlate', licensePlate);
+    putIfNonEmpty('vehicleColor', vehicleColor);
+    putIfNonEmpty('vehicleBrandModel', vehicleBrandModel);
+    if (isElectricVehicle != null) {
+      payload['isElectricVehicle'] = isElectricVehicle;
+    }
+    if (pushOptIn != null) {
+      payload['pushOptIn'] = pushOptIn;
+    }
+    // registrationStatus is admin-controlled and blocked by Firestore rules on update.
+
+    final batch = FirebaseFirestore.instance.batch();
+    final registrationRef =
+        FirebaseFirestore.instance.collection(collection).doc(uid);
+    final riderRef = FirebaseFirestore.instance.collection('riders').doc(uid);
     batch.set(registrationRef, payload, SetOptions(merge: true));
     batch.set(riderRef, payload, SetOptions(merge: true));
     await batch.commit();

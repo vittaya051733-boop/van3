@@ -1,12 +1,12 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import 'services/rider_location_pusher.dart';
-import 'utils/order_pay_at_destination.dart';
 
 class DriverScannerScreen extends StatefulWidget {
   const DriverScannerScreen({
@@ -293,34 +293,13 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
       return;
     }
 
-    final now = Timestamp.now();
-    final deliverySnapshot = buildDeliveryFinancialSnapshot(
-      orderData: data,
-      grossShippingFee: _readShippingFeeAmount(data),
-      completedAt: now,
-      completedSource: 'location_qr',
-    );
-
-    await FirebaseFirestore.instance.runTransaction((transaction) async {
-      releasePayAtDestinationHold(
-        transaction: transaction,
-        orderId: widget.orderId,
-        riderUid: user.uid,
-        releaseAmount: isPayAtDestinationOrder(data)
-            ? resolvePayAtDestinationCreditReleaseAmount(
-                data,
-                grossShippingFee: _readShippingFeeAmount(data),
-              )
-            : 0,
-        completedSource: 'location_qr',
-      );
-
-      transaction.update(orderRef, {
-        'status': 'delivered',
-        'deliveredAt': now,
-        'updatedAt': now,
-        ...deliverySnapshot,
-      });
+    final grossShippingFee = _readShippingFeeAmount(data);
+    await FirebaseFunctions.instanceFor(region: 'asia-southeast1')
+        .httpsCallable('completeRiderDelivery')
+        .call(<String, dynamic>{
+      'orderId': widget.orderId,
+      'completedSource': 'location_qr',
+      'grossShippingFee': grossShippingFee,
     });
 
     // Push พิกัดตอนส่งสำเร็จ (action)

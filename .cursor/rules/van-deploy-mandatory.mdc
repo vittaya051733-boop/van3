@@ -25,5 +25,5 @@ van3 ฟัง Firestore real-time (`orders`, `riders`) — deploy SHARED ผิ
 
 ```powershell
 ..\van2\scripts\deploy-readiness.ps1 -App van3 -Target storage
-..\van2\scripts\deploy-self.ps1 -App van3 -Target storage -ConfirmDeploy "APPROVE:van3:van-merchant" -FinalAcknowledge "YES I UNDERSTAND"
+..\van2\scripts\deploy-self.ps1 -App van3 -Target storage -ConfirmDeploy "อนุมัติ:van3:van-merchant" -ConfirmImpact "เฉพาะ:van3" -ConfirmFile "storage.rules" -FinalAcknowledge "ฉันเข้าใจแล้ว"
 ```

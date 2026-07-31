@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -12,6 +13,7 @@ import 'rider_settings_screen.dart';
 import 'wallet_screen.dart';
 import 'services/rider_orders_service.dart';
 import 'utils/order_pay_at_destination.dart';
+import 'widgets/cached_app_image.dart';
 import 'widgets/rider_alert_permission_banner.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -632,39 +634,18 @@ class _HomeScreenState extends State<HomeScreen> {
     required bool isPassengerMode,
   }) async {
     try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('orders')
-          .where('driverId', isEqualTo: uid)
-          .where('status', isEqualTo: 'pending')
-          .get();
-      if (snapshot.docs.isEmpty) return;
-
-      final batch = FirebaseFirestore.instance.batch();
-      var releasedCount = 0;
-      for (final doc in snapshot.docs) {
-        final data = doc.data();
-        final orderType = (data['orderType'] as String?)?.trim();
-        final serviceType = (data['serviceType'] as String?)?.trim();
-        final isTravel = orderType == 'travel_passenger' ||
-            serviceType == 'travel_passenger';
-        // Only release orders that match the mode we just closed.
-        if (isTravel != isPassengerMode) continue;
-
-        batch.update(doc.reference, <String, dynamic>{
-          'driverId': null,
-          'previousDriverId': uid,
-          'needsReassign': true,
-          'reassignReason': 'rider_closed_ready',
-          'status': 'awaiting_rider',
-          'riderNotifyReady': false,
-          'reassignRequestedAt': FieldValue.serverTimestamp(),
-        });
-        releasedCount++;
-      }
+      final result = await FirebaseFunctions.instanceFor(
+        region: 'asia-southeast1',
+      ).httpsCallable('releaseRiderOrdersOnOffline').call(<String, dynamic>{
+        'isPassengerMode': isPassengerMode,
+      });
+      final data = result.data is Map
+          ? Map<String, dynamic>.from(result.data as Map)
+          : const <String, dynamic>{};
+      final releasedCount = (data['releasedCount'] as num?)?.toInt() ?? 0;
       if (releasedCount > 0) {
-        await batch.commit();
         debugPrint(
-          '[van3:release] released $releasedCount pending order(s) on close',
+          '[van3:release] released $releasedCount order(s) on close',
         );
       }
     } catch (e) {
@@ -2029,13 +2010,27 @@ class _RiderProfileAvatarButton extends StatelessWidget {
     return trimmed.characters.first.toUpperCase();
   }
 
+  String? _photoUrlFromData(Map<String, dynamic>? data) {
+    for (final key in <String>['profilePhotoUrl', 'photoUrl', 'imageUrl']) {
+      final value = _readTrimmedString(data?[key]);
+      if (value != null) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  String? _photoUrlFromUser(User? user) => _readTrimmedString(user?.photoURL);
+
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
 
     if (uid == null || uid!.isEmpty) {
+      final name = _nameFromUser(user) ?? fallbackEmail;
       return _AvatarButtonShell(
-        initial: _initialFromText(_nameFromUser(user) ?? fallbackEmail),
+        initial: _initialFromText(name),
+        photoUrl: _photoUrlFromUser(user),
         onTap: onTap,
       );
     }
@@ -2051,9 +2046,11 @@ class _RiderProfileAvatarButton extends StatelessWidget {
             _nameFromData(data) ??
             _nameFromUser(user) ??
             fallbackEmail;
+        final photoUrl = _photoUrlFromData(data) ?? _photoUrlFromUser(user);
 
         return _AvatarButtonShell(
           initial: _initialFromText(name),
+          photoUrl: photoUrl,
           onTap: onTap,
         );
       },
@@ -2065,9 +2062,11 @@ class _AvatarButtonShell extends StatelessWidget {
   const _AvatarButtonShell({
     required this.initial,
     required this.onTap,
+    this.photoUrl,
   });
 
   final String initial;
+  final String? photoUrl;
   final VoidCallback onTap;
 
   @override
@@ -2091,7 +2090,17 @@ class _AvatarButtonShell extends StatelessWidget {
               ),
             ),
             clipBehavior: Clip.antiAlias,
-            child: _AvatarInitial(initial: initial),
+            child: photoUrl != null
+                ? CachedAppImage(
+                    imageUrl: photoUrl,
+                    width: 50,
+                    height: 50,
+                    fit: BoxFit.cover,
+                    lightweight: true,
+                    errorWidget: _AvatarInitial(initial: initial),
+                    placeholder: _AvatarInitial(initial: initial),
+                  )
+                : _AvatarInitial(initial: initial),
           ),
         ),
       ),

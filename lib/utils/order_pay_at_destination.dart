@@ -26,6 +26,12 @@ bool isPayAtDestinationOrder(Map<String, dynamic> orderData) {
     return true;
   }
 
+  final paymentStatus =
+      readString(orderData['paymentStatus'])?.toLowerCase();
+  if (paymentStatus == 'cash_on_delivery') {
+    return true;
+  }
+
   final paymentMap = readMap(orderData['payment']);
   final candidates = <String?>[
     readString(orderData['paymentMethod']),
@@ -118,7 +124,8 @@ double resolvePayAtDestinationHoldAmount(Map<String, dynamic> orderData) {
   return 0.0;
 }
 
-/// ยอดคืนเครดิตเมื่อส่งสำเร็จ — ไรเดอร์เก็บเงินสดจากลูกค้าแล้ว จึงคืนได้แค่ค่าส่งสุทธิ (หัก 15%)
+/// ยอดคืนเครดิตเดิม (เลิกใช้แล้ว) — ค่าส่งจ่ายผ่าน settlement โอนภายหลัง
+@Deprecated('Shipping payout uses settlement.riderPayout, not credit release.')
 double resolvePayAtDestinationCreditReleaseAmount(
   Map<String, dynamic> orderData, {
   double? grossShippingFee,
@@ -149,7 +156,6 @@ Map<String, dynamic> buildDeliveryFinancialSnapshot({
     final collectedAmount = double.parse(
       resolvePayAtDestinationHoldAmount(orderData).toStringAsFixed(1),
     );
-    final creditReleaseAmount = riderNetIncome;
 
     return <String, dynamic>{
       'deliverySettlementType': 'pay_at_destination',
@@ -157,7 +163,7 @@ Map<String, dynamic> buildDeliveryFinancialSnapshot({
       'deliveryPlatformFee': platformFee,
       'deliveryRiderNetIncome': riderNetIncome,
       'deliveryCollectedAmount': collectedAmount,
-      'deliveryCreditReleaseAmount': creditReleaseAmount,
+      'deliveryCreditReleaseAmount': 0,
       'deliveryCompletedSource': completedSource,
       'deliveryFinancials': <String, dynamic>{
         'settlementType': 'pay_at_destination',
@@ -165,7 +171,7 @@ Map<String, dynamic> buildDeliveryFinancialSnapshot({
         'platformFee': platformFee,
         'riderNetIncome': riderNetIncome,
         'collectedAmount': collectedAmount,
-        'creditReleaseAmount': creditReleaseAmount,
+        'creditReleaseAmount': 0,
         'deductionRate': 0.15,
         'currency': 'THB',
         'completedAt': completedAt,
@@ -193,6 +199,7 @@ Map<String, dynamic> buildDeliveryFinancialSnapshot({
   };
 }
 
+/// เดิมคืนเครดิตค่าส่งสุทธิเมื่อส่งสำเร็จ — เลิกใช้แล้ว (จ่ายผ่าน settlement โอนภายหลัง)
 void releasePayAtDestinationHold({
   required Transaction transaction,
   required String orderId,
@@ -200,23 +207,7 @@ void releasePayAtDestinationHold({
   required double releaseAmount,
   required String completedSource,
 }) {
-  if (releaseAmount <= 0) {
-    return;
-  }
-
-  final creditDocId =
-      'order_pay_at_destination_release_${orderId}_$riderUid';
-  transaction.set(
-    FirebaseFirestore.instance.collection('credits').doc(creditDocId),
-    {
-      'uid': riderUid,
-      'amount': releaseAmount,
-      'timestamp': FieldValue.serverTimestamp(),
-      'type': 'order_pay_at_destination_release',
-      'orderId': orderId,
-      'source': completedSource,
-    },
-  );
+  // No-op: rider keeps cash from customer; net shipping is paid via settlement.
 }
 
 Map<String, dynamic>? _readMap(Object? value) {
