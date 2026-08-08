@@ -14,6 +14,69 @@ class SettlementPayoutInfo {
   final String displayStatus;
 }
 
+String formatCreditReleaseDisplayStatus(String? rawStatus) {
+  final status = rawStatus?.trim().toLowerCase() ?? '';
+  switch (status) {
+    case 'scheduled':
+      return 'รอปล่อยเครดิต';
+    case 'held':
+      return 'ถูกระงับโดยแอดมิน';
+    case 'released':
+      return 'ปล่อยแล้ว';
+    case 'blocked':
+      return 'ถูกบล็อก';
+    default:
+      return 'รอปล่อยเครดิต';
+  }
+}
+
+bool isRiderCreditReleased(Map<String, dynamic> orderData) {
+  final topLevel = orderData['riderCreditReleaseStatus']?.toString().trim().toLowerCase();
+  if (topLevel == 'released') {
+    return true;
+  }
+  final settlement = _readMap(orderData['settlement']);
+  final release = _readMap(settlement?['riderCreditRelease']);
+  return release?['status']?.toString().trim().toLowerCase() == 'released';
+}
+
+CreditReleaseInfo? readRiderCreditReleaseInfo(Map<String, dynamic> orderData) {
+  final settlement = _readMap(orderData['settlement']);
+  final release = _readMap(settlement?['riderCreditRelease']);
+  if (release == null) {
+    return null;
+  }
+  final status =
+      orderData['riderCreditReleaseStatus']?.toString() ??
+      release['status']?.toString() ??
+      'scheduled';
+  final amount = _readDouble(release['amount']) ??
+      readRiderNetShippingIncome(orderData) ??
+      0;
+  if (amount <= 0) {
+    return null;
+  }
+  return CreditReleaseInfo(
+    amount: amount,
+    status: status,
+    displayStatus: formatCreditReleaseDisplayStatus(status),
+  );
+}
+
+class CreditReleaseInfo {
+  const CreditReleaseInfo({
+    required this.amount,
+    required this.status,
+    required this.displayStatus,
+  });
+
+  final double amount;
+  final String status;
+  final String displayStatus;
+
+  bool get isReleased => status.trim().toLowerCase() == 'released';
+}
+
 String formatSettlementPayoutDisplayStatus(String? rawStatus) {
   final status = rawStatus?.trim().toLowerCase() ?? '';
   switch (status) {
@@ -21,6 +84,10 @@ String formatSettlementPayoutDisplayStatus(String? rawStatus) {
       return 'จ่ายแล้ว';
     case 'failed':
       return 'โอนไม่สำเร็จ';
+    case 'scheduled':
+      return 'รอปล่อยเครดิต';
+    case 'held':
+      return 'ถูกระงับโดยแอดมิน';
     case 'pending':
     case 'exported':
     case '':

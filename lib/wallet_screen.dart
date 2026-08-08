@@ -9,6 +9,7 @@ import 'wallet_top_up_dialog.dart';
 import 'wallet_withdraw_dialog.dart';
 import 'services/rider_orders_service.dart';
 import 'utils/order_pay_at_destination.dart';
+import 'utils/settlement_payout_support.dart';
 
 class WalletScreen extends StatefulWidget {
   const WalletScreen({super.key});
@@ -171,6 +172,8 @@ class _WalletScreenState extends State<WalletScreen> {
                 title = 'หักเครดิต (รับงานจ่ายปลายทาง)';
               } else if (creditType == 'order_pay_at_destination_release') {
                 title = 'คืนเครดิต (เลิกใช้แล้ว • รับปลายทาง)';
+              } else if (creditType == 'order_cod_rider_credit_release') {
+                title = 'รายได้ค่าส่ง/ค่าโดยสาร (หลังหัก GP)';
               } else if (provider == 'slipok' && status == 'verified') {
                 title = 'เติมเครดิต (ตรวจสลิป)';
               } else if (provider != null && provider.isNotEmpty) {
@@ -216,6 +219,22 @@ class _WalletScreenState extends State<WalletScreen> {
               final orderCode = data['orderCode']?.toString().trim();
               final deliveredAt = _orderDeliveredAt(data);
               final isCod = isPayAtDestinationOrder(data);
+              final creditRelease = readRiderCreditReleaseInfo(data);
+              if (creditRelease != null && !creditRelease.isReleased) {
+                items.add(
+                  _WalletHistoryItem(
+                    title: 'รอปล่อยเครดิต${isCod ? ' (จ่ายปลายทาง)' : ''}',
+                    subtitle: orderCode == null || orderCode.isEmpty
+                        ? creditRelease.displayStatus
+                        : 'ออเดอร์: $orderCode • ${creditRelease.displayStatus}',
+                    amount: netIncome,
+                    happenedAt: deliveredAt,
+                    icon: Icons.hourglass_top_rounded,
+                    color: Colors.orange,
+                  ),
+                );
+                continue;
+              }
               if (isCod) {
                 final collected = resolvePayAtDestinationHoldAmount(data);
                 items.add(
@@ -315,6 +334,9 @@ class _WalletScreenState extends State<WalletScreen> {
           final data = doc.data();
           final status = data['status']?.toString().trim();
           if (status != 'delivered' || !_isDeliveredToday(data)) {
+            continue;
+          }
+          if (isPayAtDestinationOrder(data) && !isRiderCreditReleased(data)) {
             continue;
           }
           deliveredTodayCount += 1;
