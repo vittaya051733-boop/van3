@@ -1,3 +1,5 @@
+import '../l10n/l10n.dart';
+
 class AdminSupportTopic {
   const AdminSupportTopic({
     required this.key,
@@ -25,37 +27,37 @@ class AdminSupportConfig {
 /// UID แอดมินสำหรับโทรในแอป (fallback ถ้า ticket ยังไม่มี assignedAdminUid)
 const String kAdminSupportCalleeUid = '';
 
-const AdminSupportConfig kVan3AdminSupportConfig = AdminSupportConfig(
+AdminSupportConfig get kVan3AdminSupportConfig => AdminSupportConfig(
   sourceApp: 'van3',
-  sourceLabel: 'ไรเดอร์',
+  sourceLabel: L10n.adminSupportSourceRider,
   topics: <AdminSupportTopic>[
     AdminSupportTopic(
       key: 'job_assignment',
-      label: 'ปัญหารับงาน / มอบหมายออเดอร์',
+      label: L10n.adminTopicJobAssignment,
     ),
     AdminSupportTopic(
       key: 'wallet_credit',
-      label: 'กระเป๋าเงิน / เครดิต / รายได้',
+      label: L10n.adminTopicWalletCredit,
     ),
     AdminSupportTopic(
       key: 'location_gps',
-      label: 'GPS / พิกัด / แผนที่',
+      label: L10n.adminTopicGps,
     ),
     AdminSupportTopic(
       key: 'delivery_issue',
-      label: 'ปัญหาลูกค้า / ร้านขณะส่งของ',
+      label: L10n.adminTopicDeliveryIssue,
     ),
     AdminSupportTopic(
       key: 'account_verification',
-      label: 'บัญชีไรเดอร์ / เอกสารยืนยัน',
+      label: L10n.adminTopicAccountVerification,
     ),
     AdminSupportTopic(
       key: 'app_bug',
-      label: 'แจ้งข้อผิดพลาดแอป',
+      label: L10n.adminTopicAppBug,
     ),
     AdminSupportTopic(
       key: AdminSupportTopic.customKey,
-      label: 'อื่นๆ (พิมพ์หัวข้อเอง)',
+      label: L10n.adminTopicCustom,
     ),
   ],
 );

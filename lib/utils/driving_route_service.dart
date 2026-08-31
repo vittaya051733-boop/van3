@@ -1,4 +1,4 @@
-import 'package:cloud_functions/cloud_functions.dart';
+import 'guarded_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
@@ -29,18 +29,15 @@ class DrivingRouteService {
     }
 
     try {
-      final callable = FirebaseFunctions.instanceFor(
-        region: _functionsRegion,
-      ).httpsCallable('computeRouteMetrics');
-
-      final result = await callable
-          .call(<String, Object>{
-            'originLatitude': originLat,
-            'originLongitude': originLng,
-            'destinationLatitude': destinationLat,
-            'destinationLongitude': destinationLng,
-          })
-          .timeout(_requestTimeout);
+      final result = await GuardedFunctions.call(
+        'computeRouteMetrics',
+        parameters: <String, Object>{
+          'originLatitude': originLat,
+          'originLongitude': originLng,
+          'destinationLatitude': destinationLat,
+          'destinationLongitude': destinationLng,
+        },
+      ).timeout(_requestTimeout);
 
       final payload = result.data;
       if (payload is! Map) {

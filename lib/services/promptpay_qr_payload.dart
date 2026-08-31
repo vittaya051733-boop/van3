@@ -1,3 +1,5 @@
+import '../l10n/l10n.dart';
+
 class PromptPayQrPayload {
   PromptPayQrPayload._();
 
@@ -94,9 +96,66 @@ class PromptPayQrPayload {
   static String maskedDisplayLabel(String promptPayId) {
     final suffix = maskedLastFour(promptPayId);
     if (suffix.isEmpty) {
-      return 'PromptPay';
+      return L10n.promptPayDisplay;
     }
-    return 'PromptPay ••••$suffix';
+    return L10n.promptPayMaskedDisplay(suffix);
+  }
+
+  static String get payoutLinkedBankNotice => L10n.promptPayBankLinkHint;
+
+  static String normalizeId(String promptPayId) {
+    var digits = _digitsOnly(promptPayId);
+    if (digits.length == 13) {
+      return digits;
+    }
+    if (digits.startsWith('66') && digits.length >= 11 && digits.length <= 12) {
+      digits = '0${digits.substring(2)}';
+    }
+    if (digits.length == 9) {
+      digits = '0$digits';
+    }
+    return digits;
+  }
+
+  static bool isValidId(String promptPayId) {
+    final digits = normalizeId(promptPayId);
+    return digits.length == 13 ||
+        (digits.length >= 9 && digits.length <= 10);
+  }
+
+  static String? resolveProfileId({String? phone, String? nationalId}) {
+    final nationalDigits = _digitsOnly(nationalId ?? '');
+    if (nationalDigits.length == 13) {
+      return nationalDigits;
+    }
+    final phoneDigits = normalizeId(phone ?? '');
+    if (phoneDigits.length >= 9 && phoneDigits.length <= 10) {
+      return phoneDigits;
+    }
+    return null;
+  }
+
+  static bool hasValidPayoutProfile({String? phone, String? nationalId}) {
+    return resolveProfileId(phone: phone, nationalId: nationalId) != null;
+  }
+
+  static String? validatePayoutProfile({String? phone, String? nationalId}) {
+    final phoneRaw = phone?.trim() ?? '';
+    final nationalRaw = nationalId?.trim() ?? '';
+    if (phoneRaw.isEmpty && nationalRaw.isEmpty) {
+      return L10n.promptPayRequired;
+    }
+    final nationalDigits = _digitsOnly(nationalRaw);
+    if (nationalRaw.isNotEmpty && nationalDigits.length != 13) {
+      return L10n.promptPayNationalIdLength;
+    }
+    if (phoneRaw.isNotEmpty && !isValidId(phoneRaw)) {
+      return L10n.promptPayPhoneInvalid;
+    }
+    if (hasValidPayoutProfile(phone: phoneRaw, nationalId: nationalRaw)) {
+      return null;
+    }
+    return L10n.promptPayInvalid;
   }
 
   static String _crc16CcittFalse(String value) {

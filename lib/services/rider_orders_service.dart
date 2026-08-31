@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
+import '../utils/guarded_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
@@ -211,9 +211,7 @@ class RiderOrdersService {
   }
 
   Future<void> _loadViaCloudFunction(String uid) async {
-    final result = await FirebaseFunctions.instanceFor(
-      region: 'asia-southeast1',
-    ).httpsCallable('listRiderOrders').call(<String, dynamic>{});
+    final result = await GuardedFunctions.call('listRiderOrders');
 
     final payload = result.data is Map
         ? Map<String, dynamic>.from(result.data as Map)

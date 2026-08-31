@@ -82,6 +82,14 @@ service cloud.firestore {
         'catalogHeading',
         'catalogHeadingSlug',
         'catalogHeadingSort',
+        'catalogTypeConfidence',
+        'catalogHeadingConfidence',
+        'catalogReviewStatus',
+        'catalogReviewReasons',
+        'catalogReviewReasonLabels',
+        'catalogReviewedAt',
+        'catalogReviewedBy',
+        'catalogAdminLocked',
         'aiCatalogClassifiedAt',
         'aiCatalogClassifierVersion',
         'aiCatalogInputHash',
@@ -99,6 +107,14 @@ service cloud.firestore {
           && request.resource.data.get('catalogHeading', null) == resource.data.get('catalogHeading', null)
           && request.resource.data.get('catalogHeadingSlug', null) == resource.data.get('catalogHeadingSlug', null)
           && request.resource.data.get('catalogHeadingSort', null) == resource.data.get('catalogHeadingSort', null)
+          && request.resource.data.get('catalogTypeConfidence', null) == resource.data.get('catalogTypeConfidence', null)
+          && request.resource.data.get('catalogHeadingConfidence', null) == resource.data.get('catalogHeadingConfidence', null)
+          && request.resource.data.get('catalogReviewStatus', null) == resource.data.get('catalogReviewStatus', null)
+          && request.resource.data.get('catalogReviewReasons', null) == resource.data.get('catalogReviewReasons', null)
+          && request.resource.data.get('catalogReviewReasonLabels', null) == resource.data.get('catalogReviewReasonLabels', null)
+          && request.resource.data.get('catalogReviewedAt', null) == resource.data.get('catalogReviewedAt', null)
+          && request.resource.data.get('catalogReviewedBy', null) == resource.data.get('catalogReviewedBy', null)
+          && request.resource.data.get('catalogAdminLocked', null) == resource.data.get('catalogAdminLocked', null)
           && request.resource.data.get('aiCatalogClassifiedAt', null) == resource.data.get('aiCatalogClassifiedAt', null)
           && request.resource.data.get('aiCatalogClassifierVersion', null) == resource.data.get('aiCatalogClassifierVersion', null)
           && request.resource.data.get('aiCatalogInputHash', null) == resource.data.get('aiCatalogInputHash', null);
@@ -474,6 +490,19 @@ service cloud.firestore {
           && request.resource.data.likeCount >= 0
           && request.resource.data.dislikeCount >= 0
           && request.resource.data.loveCount >= 0
+          && (!('shareCount' in request.resource.data)
+              || (request.resource.data.shareCount is int
+                  && request.resource.data.shareCount >= 0))
+          && request.resource.data.updatedAt == request.time;
+    }
+
+    function canCreateProductReactionStatsForShare(productId) {
+      return request.resource.data.productId == productId
+          && request.resource.data.shopId is string
+          && request.resource.data.likeCount == 0
+          && request.resource.data.dislikeCount == 0
+          && request.resource.data.loveCount == 0
+          && request.resource.data.shareCount == 1
           && request.resource.data.updatedAt == request.time;
     }
 
@@ -487,6 +516,19 @@ service cloud.firestore {
             'loveCount',
             'updatedAt',
           ])
+          && request.resource.data.updatedAt == request.time;
+    }
+
+    function canIncrementProductShareCount() {
+      return request.resource.data.productId == resource.data.productId
+          && request.resource.data.shopId == resource.data.shopId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'shareCount',
+            'updatedAt',
+          ])
+          && request.resource.data.shareCount is int
+          && request.resource.data.shareCount
+              == resource.data.get('shareCount', 0) + 1
           && request.resource.data.updatedAt == request.time;
     }
 
@@ -532,7 +574,11 @@ service cloud.firestore {
           && (!('lastMessageRole' in request.resource.data)
               || request.resource.data.lastMessageRole == 'requester')
           && (!('lastMessageAt' in request.resource.data)
-              || request.resource.data.lastMessageAt == request.time);
+              || request.resource.data.lastMessageAt == request.time)
+          && (!('orderId' in request.resource.data)
+              || (request.resource.data.orderId is string
+                  && request.resource.data.orderId.size() > 0
+                  && request.resource.data.orderId.size() <= 80));
     }
 
     function adminSupportTicketDoc(ticketId) {
@@ -606,6 +652,7 @@ service cloud.firestore {
             'contactClosed',
             'closedAt',
             'closedByAdminUid',
+            'claimRequest',
             'updatedAt'
           ]);
     }
@@ -622,6 +669,89 @@ service cloud.firestore {
           && request.resource.data.qaPairs is list
           && request.resource.data.status == 'closed'
           && request.resource.data.closedAt == request.time;
+    }
+
+    function merchantUserPrivilegedFieldKeys() {
+      return [
+        'merchantSecurityDepositPaid',
+        'merchantSecurityDepositPaidAt',
+        'merchantSecurityDepositAmount',
+        'omiseRecipientId',
+        'omiseRecipientUpdatedAt',
+        'contractStatus',
+        'contractCancelledAt',
+        'bankName',
+        'accountNumber',
+        'accountName',
+        'bankAccountNumber',
+        'merchantPenaltyBlocked',
+        'merchantPenaltyUncollectedTotal',
+        'merchantPenaltyBlockedAt',
+      ];
+    }
+
+    function merchantUserPrivilegedFieldsUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(
+        merchantUserPrivilegedFieldKeys(),
+      );
+    }
+
+    function merchantUserPrivilegedFieldsAbsentOnCreate() {
+      return !request.resource.data.keys().hasAny(merchantUserPrivilegedFieldKeys());
+    }
+
+    function contractPrivilegedFieldsUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        'cancelledAt',
+        'contractCancelledAt',
+        'terminatedAt',
+        'approvedAt',
+        'approvedBy',
+        'rejectedAt',
+        'rejectedBy',
+      ]);
+    }
+
+    function contractSelfUpdateAllowed() {
+      return contractPrivilegedFieldsUnchanged()
+          && (
+            request.resource.data.get('status', resource.data.get('status', ''))
+                == resource.data.get('status', '')
+            || (
+              request.resource.data.get('status', '') != 'cancelled'
+              && request.resource.data.get('status', '') != 'terminated'
+              && request.resource.data.get('status', '') == 'accepted'
+              && (
+                resource.data.get('status', '') == ''
+                || resource.data.get('status', '') == 'pending'
+                || resource.data.get('status', '') == 'pending_acceptance'
+                || resource.data.get('status', '') == 'pending_contract'
+              )
+            )
+          );
+    }
+
+    function registrationPrivilegedFieldsUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        'status',
+        'approvedAt',
+        'approvedBy',
+        'rejectedAt',
+        'rejectedBy',
+        'bankName',
+        'accountNumber',
+        'accountOwner',
+        'accountName',
+        'bankAccountNumber',
+        'omiseRecipientId',
+        'omiseRecipientUpdatedAt',
+      ]);
+    }
+
+    function registrationCreateStatusAllowed() {
+      return !request.resource.data.keys().hasAny(['status'])
+          || request.resource.data.status == 'pending'
+          || isPrivilegedAdmin();
     }
 
     // แอปเช็คอัปเดต ต้องอ่านได้ก่อนล็อกอิน (ใช้ใน AppUpdateGate)
@@ -742,8 +872,10 @@ service cloud.firestore {
 
     match /product_reaction_stats/{productId} {
       allow get, list: if true;
-      allow create: if canCreateProductReactionStats(productId);
+      allow create: if canCreateProductReactionStats(productId)
+          || canCreateProductReactionStatsForShare(productId);
       allow update: if canUpdateProductReactionStats()
+          || canIncrementProductShareCount()
           || isPrivilegedAdmin();
       allow delete: if isPrivilegedAdmin();
 
@@ -793,7 +925,10 @@ service cloud.firestore {
     // โปรไฟล์ผู้ใช้เดิม (รองรับช่วง migration)
     match /users/{userId} {
       allow get: if isSelf(userId) || isPrivilegedAdmin();
-      allow create, update, delete: if isSelf(userId);
+      allow create: if isSelf(userId) && merchantUserPrivilegedFieldsAbsentOnCreate();
+      allow update: if isPrivilegedAdmin()
+          || (isSelf(userId) && merchantUserPrivilegedFieldsUnchanged());
+      allow delete: if isSelf(userId);
       allow list: if isPrivilegedAdmin();
 
       match /friends/{friendId} {
@@ -833,7 +968,8 @@ service cloud.firestore {
       allow get: if isSelf(userId) || isPrivilegedAdmin();
       allow list: if isPrivilegedAdmin();
       allow create: if isSelf(userId);
-      allow update: if isSelf(userId) || isPrivilegedAdmin();
+      allow update: if isPrivilegedAdmin()
+          || (isSelf(userId) && contractSelfUpdateAllowed());
       allow delete: if isPrivilegedAdmin();
     }
 
@@ -903,14 +1039,20 @@ service cloud.firestore {
 
       allow create: if isRegistrationCollection(collection)
           && signedIn()
-          && isRegistrationCreateOwner(docId);
+          && isRegistrationCreateOwner(docId)
+          && registrationCreateStatusAllowed();
 
       allow update: if isRegistrationCollection(collection)
           && signedIn()
           && (
-            docId == uid()
-            || (resource.data.ownerId != null && resource.data.ownerId == uid())
-            || isPrivilegedAdmin()
+            isPrivilegedAdmin()
+            || (
+              (
+                docId == uid()
+                || (resource.data.ownerId != null && resource.data.ownerId == uid())
+              )
+              && registrationPrivilegedFieldsUnchanged()
+            )
           );
 
       allow delete: if isRegistrationCollection(collection)
@@ -997,6 +1139,11 @@ service cloud.firestore {
         'deliveryCollectedAmount',
         'deliveryCreditReleaseAmount',
         'deliveryCompletedSource',
+        'penalty',
+        'penaltyCharged',
+        'penaltyUncollected',
+        'penaltyUpdatedAt',
+        'penaltyLastCharge',
       ]);
     }
 
@@ -1010,6 +1157,10 @@ service cloud.firestore {
         'approvedAt',
         'approvedBy',
         'rating',
+        'bankName',
+        'accountNumber',
+        'accountName',
+        'accountOwner',
       ]);
     }
 
@@ -1047,6 +1198,50 @@ service cloud.firestore {
       return statusChangedToCancelOrRefund || lifecycleFieldsChanged;
     }
 
+    function resolveOrderShopUid(order) {
+      return order.get('shopOwnerId', order.get('shopId', ''));
+    }
+
+    function isShopAcceptingOrderUpdate() {
+      let oldStatus = resource.data.get('status', '');
+      let newStatus = request.resource.data.get('status', '');
+      let shopUid = resolveOrderShopUid(resource.data);
+      return shopUid is string
+          && shopUid != ''
+          && uid() == shopUid
+          && newStatus == 'preparing'
+          && oldStatus != 'preparing';
+    }
+
+    function merchantPenaltyBlocksOrderAccept() {
+      let shopUid = resolveOrderShopUid(resource.data);
+      return isShopAcceptingOrderUpdate()
+          && (
+            (
+              exists(/databases/$(database)/documents/users/$(shopUid))
+              && get(/databases/$(database)/documents/users/$(shopUid)).data.get('merchantPenaltyBlocked', false) == true
+            )
+            || (
+              exists(/databases/$(database)/documents/shop_operations/$(shopUid))
+              && get(/databases/$(database)/documents/shop_operations/$(shopUid)).data.get('penaltyBlocked', false) == true
+            )
+          );
+    }
+
+    function shopOperationsPenaltyFieldKeys() {
+      return ['penaltyBlocked', 'penaltyBlockReason', 'acceptingOrders'];
+    }
+
+    function shopOperationsPenaltyFieldsUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(
+        shopOperationsPenaltyFieldKeys(),
+      );
+    }
+
+    function shopOperationsPenaltyFieldsAbsentOnCreate() {
+      return !request.resource.data.keys().hasAny(shopOperationsPenaltyFieldKeys());
+    }
+
     function canRiderAcceptAwaitingOrder() {
       return false;
     }
@@ -1062,6 +1257,7 @@ service cloud.firestore {
             && orderFinancialFieldsUnchanged()
             && !clientCannotAcceptOrDeliverOrder()
             && !clientCannotMutateOrderLifecycle()
+            && !merchantPenaltyBlocksOrderAccept()
           );
       allow delete: if isPrivilegedAdmin();
 
@@ -1083,12 +1279,23 @@ service cloud.firestore {
     // ตั้งค่าการทำงานของร้าน
     match /shop_operations/{shopId} {
       allow read: if isSelf(shopId) || isPrivilegedAdmin();
-      allow write: if isSelf(shopId) || isPrivilegedAdmin();
+      allow create: if isPrivilegedAdmin()
+          || (isSelf(shopId) && shopOperationsPenaltyFieldsAbsentOnCreate());
+      allow update: if isPrivilegedAdmin()
+          || (isSelf(shopId) && shopOperationsPenaltyFieldsUnchanged());
+      allow delete: if isPrivilegedAdmin();
     }
 
     // เครดิต — top-up / hold / withdraw ผ่าน Cloud Function เท่านั้น
     match /credits/{creditId} {
-      allow read: if signedIn() && resource.data.uid == uid();
+      // Allow get on own doc id even when the wallet doc does not exist yet
+      // (resource == null). List still requires recipient field match.
+      allow get: if signedIn()
+          && (creditId == uid()
+              || (resource != null && resource.data.uid == uid())
+              || isPrivilegedAdmin());
+      allow list: if signedIn()
+          && resource.data.uid == uid();
       allow create, update, delete: if isPrivilegedAdmin();
     }
 
@@ -1101,7 +1308,8 @@ service cloud.firestore {
 
     // คำขอถอนเงิน — สร้างผ่าน Cloud Function เท่านั้น
     match /withdraw_requests/{requestId} {
-      allow read: if signedIn() && resource.data.uid == uid();
+      allow read: if isPrivilegedAdmin()
+          || (signedIn() && resource.data.uid == uid());
       allow create: if false;
       allow update: if isPrivilegedAdmin();
       allow delete: if isPrivilegedAdmin();
@@ -1208,6 +1416,13 @@ service cloud.firestore {
       allow create, update, delete: if isPrivilegedAdmin();
     }
 
+    // เคลมสินค้า — เขียนผ่าน Cloud Functions เท่านั้น
+    match /order_claims/{claimId} {
+      allow read: if isPrivilegedAdmin()
+          || (signedIn() && resource.data.customerId == uid());
+      allow create, update, delete: if false;
+    }
+
     // ติดต่อแอดมิน — van1/van2/van3 ส่ง / van4 อ่านและตอบกลับ
     match /admin_support_tickets/{ticketId} {
       allow get: if isPrivilegedAdmin()
@@ -1293,6 +1508,34 @@ service cloud.firestore {
       allow get, list: if isPrivilegedAdmin();
       allow create, update: if isPrivilegedAdmin() && uid() == uid;
       allow delete: if isPrivilegedAdmin() && uid() == uid;
+    }
+
+    // Heartbeat จาก van1/van2/van3/van4 → van4 dashboard สุขภาพระบบ
+    // path: ecosystem_heartbeats/{appId}/sessions/{uid}
+    match /ecosystem_heartbeats/{appId} {
+      allow read: if isPrivilegedAdmin();
+      allow write: if false;
+
+      match /sessions/{sessionUid} {
+        allow get: if isPrivilegedAdmin() || isSelf(sessionUid);
+        allow list: if isPrivilegedAdmin();
+        allow create, update: if signedIn()
+            && isSelf(sessionUid)
+            && appId in ['van1', 'van2', 'van3', 'van4']
+            && request.resource.data.uid == uid()
+            && request.resource.data.appId == appId
+            && request.resource.data.keys().hasOnly([
+              'appId',
+              'uid',
+              'firestoreOk',
+              'updatedAt',
+              'platform',
+              'points',
+              'lastError',
+              'errorCode',
+            ]);
+        allow delete: if isSelf(sessionUid) || isPrivilegedAdmin();
+      }
     }
 
     // Default deny

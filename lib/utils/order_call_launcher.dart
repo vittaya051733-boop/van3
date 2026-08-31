@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../call_screen.dart';
 import '../models/user_profile.dart';
 import '../services/notification_service.dart';
@@ -30,14 +31,14 @@ class OrderCallLauncher {
         ? peerUid.trim()
         : _readShopOwnerUid(orderData)?.trim() ?? '';
     if (trimmedPeerUid.isEmpty) {
-      _showSnack(context, 'ไม่พบบัญชีปลายทางสำหรับเริ่มการโทร');
+      _showSnack(context, L10n.noCallPeerAccount);
       return;
     }
 
     try {
       final caller = await _buildCurrentUserProfile();
       if (caller.uid == trimmedPeerUid) {
-        throw Exception('ไม่สามารถเริ่มการโทรหาบัญชีตัวเองได้');
+        throw Exception(L10n.cannotCallSelf);
       }
 
       final callee = await _buildCalleeProfile(
@@ -76,7 +77,7 @@ class OrderCallLauncher {
       if (!context.mounted) {
         return;
       }
-      _showSnack(context, 'เริ่มการโทรไม่สำเร็จ: $error');
+      _showSnack(context, L10n.startCallFailed(error));
     }
   }
 
@@ -95,7 +96,7 @@ class OrderCallLauncher {
         return trimmed;
       }
     }
-    return 'ลูกค้า';
+    return L10n.customer;
   }
 
   static String readShopLabel(Map<String, dynamic> orderData) {
@@ -111,7 +112,7 @@ class OrderCallLauncher {
         return trimmed;
       }
     }
-    return 'ร้านค้า';
+    return L10n.shop;
   }
 
   static String? readCustomerPhotoUrl(Map<String, dynamic> orderData) {
@@ -167,7 +168,7 @@ class OrderCallLauncher {
 
     return UserProfile(
       uid: uid,
-      displayName: _sanitizeLabel(fallbackLabel, fallback: 'ผู้ติดต่อ'),
+      displayName: _sanitizeLabel(fallbackLabel, fallback: L10n.contactPerson),
       phoneNumber: fallbackPhone,
       photoUrl: fallbackPhotoUrl ?? readShopPhotoUrl(orderData),
     );
@@ -176,7 +177,7 @@ class OrderCallLauncher {
   static Future<UserProfile> _buildCurrentUserProfile() async {
     final currentUser = FirebaseAuth.instance.currentUser;
     if (currentUser == null) {
-      throw Exception('ไม่พบผู้ใช้ปัจจุบัน');
+      throw Exception(L10n.currentUserNotFound);
     }
 
     try {
@@ -193,7 +194,7 @@ class OrderCallLauncher {
 
     return UserProfile(
       uid: currentUser.uid,
-      displayName: _sanitizeLabel(currentUser.displayName, fallback: 'ไรเดอร์'),
+      displayName: _sanitizeLabel(currentUser.displayName, fallback: L10n.rider),
       phoneNumber: currentUser.phoneNumber,
       photoUrl: currentUser.photoURL,
     );

@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../l10n/l10n.dart';
 import 'order_pay_at_destination.dart';
 
 class SettlementPayoutInfo {
@@ -15,19 +16,7 @@ class SettlementPayoutInfo {
 }
 
 String formatCreditReleaseDisplayStatus(String? rawStatus) {
-  final status = rawStatus?.trim().toLowerCase() ?? '';
-  switch (status) {
-    case 'scheduled':
-      return 'รอปล่อยเครดิต';
-    case 'held':
-      return 'ถูกระงับโดยแอดมิน';
-    case 'released':
-      return 'ปล่อยแล้ว';
-    case 'blocked':
-      return 'ถูกบล็อก';
-    default:
-      return 'รอปล่อยเครดิต';
-  }
+  return L10n.creditReleaseDisplayStatus(rawStatus);
 }
 
 bool isRiderCreditReleased(Map<String, dynamic> orderData) {
@@ -78,23 +67,7 @@ class CreditReleaseInfo {
 }
 
 String formatSettlementPayoutDisplayStatus(String? rawStatus) {
-  final status = rawStatus?.trim().toLowerCase() ?? '';
-  switch (status) {
-    case 'paid':
-      return 'จ่ายแล้ว';
-    case 'failed':
-      return 'โอนไม่สำเร็จ';
-    case 'scheduled':
-      return 'รอปล่อยเครดิต';
-    case 'held':
-      return 'ถูกระงับโดยแอดมิน';
-    case 'pending':
-    case 'exported':
-    case '':
-      return 'รอชำระ';
-    default:
-      return 'รอชำระ';
-  }
+  return L10n.settlementPayoutDisplayStatus(rawStatus);
 }
 
 bool isSettlementPayoutPaid(String? rawStatus) {
@@ -192,9 +165,8 @@ Future<void> enqueuePayoutPendingNotifications({
       'targetApp': 'van1',
       'recipientUid': shopOwnerId,
       'orderId': orderId,
-      'title': 'มียอดเงินเข้า',
-      'body':
-          'ออเดอร์ $orderLabel ${shopNetAmount.toStringAsFixed(2)} บาท • รอชำระ',
+      'title': L10n.payoutIncomingTitle,
+      'body': L10n.payoutIncomingBody(orderLabel, shopNetAmount),
       'action': 'payout_pending',
       'read': false,
       'isRead': false,
@@ -207,9 +179,8 @@ Future<void> enqueuePayoutPendingNotifications({
       'targetApp': 'van3',
       'recipientUid': riderId,
       'orderId': orderId,
-      'title': 'มียอดเงินเข้า',
-      'body':
-          'ออเดอร์ $orderLabel ${riderNetAmount.toStringAsFixed(2)} บาท • รอชำระ',
+      'title': L10n.payoutIncomingTitle,
+      'body': L10n.payoutIncomingBody(orderLabel, riderNetAmount),
       'action': 'payout_pending',
       'read': false,
       'isRead': false,
@@ -234,8 +205,7 @@ Future<void> enqueuePayoutPaidNotifications({
       : '#${orderId.substring(0, orderId.length.clamp(0, 8))}';
   final notifications = FirebaseFirestore.instance.collection('app_notifications');
   final now = FieldValue.serverTimestamp();
-  final body =
-      'ออเดอร์ $orderLabel ${amount.toStringAsFixed(2)} บาท • จ่ายแล้ว';
+  final body = L10n.payoutPaidBody(orderLabel, amount);
 
   if (payoutType == 'shop') {
     final shopOwnerId = _readRecipientUid(
@@ -248,7 +218,7 @@ Future<void> enqueuePayoutPaidNotifications({
       'targetApp': 'van1',
       'recipientUid': shopOwnerId,
       'orderId': orderId,
-      'title': 'โอนเงินสำเร็จ',
+      'title': L10n.payoutSuccessTitle,
       'body': body,
       'action': 'payout_paid',
       'read': false,
@@ -269,7 +239,7 @@ Future<void> enqueuePayoutPaidNotifications({
       'targetApp': 'van3',
       'recipientUid': riderId,
       'orderId': orderId,
-      'title': 'โอนเงินสำเร็จ',
+      'title': L10n.payoutSuccessTitle,
       'body': body,
       'action': 'payout_paid',
       'read': false,

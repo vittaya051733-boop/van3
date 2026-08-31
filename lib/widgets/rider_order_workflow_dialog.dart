@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../services/rider_order_workflow_service.dart';
 
 class RiderOrderWorkflowDialog extends StatelessWidget {
@@ -50,26 +51,26 @@ class RiderOrderWorkflowDialog extends StatelessWidget {
   String _titleForStep(RiderOrderWorkflowStep step) {
     switch (step) {
       case RiderOrderWorkflowStep.shopReady:
-        return 'ร้านพร้อมส่งแล้ว';
+        return L10n.workflowShopReady;
       case RiderOrderWorkflowStep.scanAtShop:
-        return 'ถึงร้านแล้ว';
+        return L10n.workflowArrivedShop;
       case RiderOrderWorkflowStep.goToCustomer:
-        return 'เริ่มจัดส่งแล้ว';
+        return L10n.workflowDeliveryStarted;
       case RiderOrderWorkflowStep.photoProof:
-        return 'ถึงลูกค้าแล้ว';
+        return L10n.workflowArrivedCustomer;
     }
   }
 
   String _bodyForStep(RiderOrderWorkflowStep step) {
     switch (step) {
       case RiderOrderWorkflowStep.shopReady:
-        return 'ไปรับสินค้าที่ร้านได้แล้ว';
+        return L10n.workflowGoPickupShop;
       case RiderOrderWorkflowStep.scanAtShop:
-        return 'สแกน QR ออเดอร์เพื่อยืนยันรับสินค้าจากร้าน';
+        return L10n.workflowScanQrPickup;
       case RiderOrderWorkflowStep.goToCustomer:
-        return 'นำสินค้าไปส่งลูกค้าตามแผนที่';
+        return L10n.workflowDeliverToCustomer;
       case RiderOrderWorkflowStep.photoProof:
-        return 'ถ่ายรูปยืนยันการส่งถึงมือลูกค้า';
+        return L10n.workflowPhotoProof;
     }
   }
 
@@ -79,67 +80,67 @@ class RiderOrderWorkflowDialog extends StatelessWidget {
         return [
           TextButton(
             onPressed: () => onAction(RiderOrderWorkflowAction.later),
-            child: const Text('ทีหลัง'),
+            child: Text(L10n.laterAction),
           ),
           OutlinedButton.icon(
             onPressed: () => onAction(RiderOrderWorkflowAction.openShopMap),
             icon: const Icon(Icons.store_mall_directory_outlined),
-            label: const Text('แผนที่ร้าน'),
+            label: Text(L10n.shopMap),
           ),
           FilledButton(
             onPressed: () => onAction(RiderOrderWorkflowAction.goToShopNow),
-            child: const Text('ไปรับเลย'),
+            child: Text(L10n.goPickupNow),
           ),
         ];
       case RiderOrderWorkflowStep.scanAtShop:
         return [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('ปิด'),
+            child: Text(L10n.close),
           ),
           OutlinedButton.icon(
             onPressed: () => onAction(RiderOrderWorkflowAction.openShopMap),
             icon: const Icon(Icons.store_mall_directory_outlined),
-            label: const Text('แผนที่ร้าน'),
+            label: Text(L10n.shopMap),
           ),
           FilledButton.icon(
             onPressed: () => onAction(RiderOrderWorkflowAction.scanQr),
             icon: const Icon(Icons.qr_code_scanner_rounded),
-            label: const Text('สแกน QR'),
+            label: Text(L10n.scanQr),
           ),
         ];
       case RiderOrderWorkflowStep.goToCustomer:
         return [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('ปิด'),
+            child: Text(L10n.close),
           ),
           OutlinedButton.icon(
             onPressed: () => onAction(RiderOrderWorkflowAction.capturePhoto),
             icon: const Icon(Icons.camera_alt_rounded),
-            label: const Text('ถ่ายรูปเมื่อถึง'),
+            label: Text(L10n.photoOnArrival),
           ),
           FilledButton.icon(
             onPressed: () => onAction(RiderOrderWorkflowAction.openCustomerMap),
             icon: const Icon(Icons.map_outlined),
-            label: const Text('แผนที่ลูกค้า'),
+            label: Text(L10n.customerMap),
           ),
         ];
       case RiderOrderWorkflowStep.photoProof:
         return [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('ปิด'),
+            child: Text(L10n.close),
           ),
           OutlinedButton.icon(
             onPressed: () => onAction(RiderOrderWorkflowAction.openCustomerMap),
             icon: const Icon(Icons.map_outlined),
-            label: const Text('แผนที่ลูกค้า'),
+            label: Text(L10n.customerMap),
           ),
           FilledButton.icon(
             onPressed: () => onAction(RiderOrderWorkflowAction.capturePhoto),
             icon: const Icon(Icons.camera_alt_rounded),
-            label: const Text('ถ่ายรูป'),
+            label: Text(L10n.takePhoto),
           ),
         ];
     }

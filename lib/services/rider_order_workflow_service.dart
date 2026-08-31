@@ -7,6 +7,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart'
     as fln;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../l10n/l10n.dart';
 import '../main.dart';
 import '../widgets/rider_order_workflow_dialog.dart';
 import 'rider_order_actions.dart';
@@ -46,11 +47,11 @@ class RiderOrderWorkflowService {
   final fln.FlutterLocalNotificationsPlugin _localNotifications =
       fln.FlutterLocalNotificationsPlugin();
 
-  static const fln.AndroidNotificationChannel _shopReadyChannel =
+  static final fln.AndroidNotificationChannel _shopReadyChannel =
       fln.AndroidNotificationChannel(
         'rider_shop_ready',
-        'ร้านพร้อมส่ง',
-        description: 'แจ้งเตือนเมื่อร้านค้าเตรียมสินค้าเสร็จแล้ว',
+        L10n.shopReadyChannelName,
+        description: L10n.shopReadyChannelDesc,
         importance: fln.Importance.high,
       );
 
@@ -116,10 +117,10 @@ class RiderOrderWorkflowService {
 
     final title = message.notification?.title ??
         message.data['title']?.toString() ??
-        'ร้านเตรียมสินค้าเสร็จแล้ว';
+        L10n.shopPreparedTitle;
     final body = message.notification?.body ??
         message.data['body']?.toString() ??
-        'พร้อมให้ไรเดอร์รับสินค้า';
+        L10n.shopReadyForPickupBody;
 
     await _showShopReadyTrayNotification(
       orderId: orderId,
@@ -142,10 +143,10 @@ class RiderOrderWorkflowService {
 
     final title = message.notification?.title ??
         message.data['title']?.toString() ??
-        'ร้านเตรียมสินค้าเสร็จแล้ว';
+        L10n.shopPreparedTitle;
     final body = message.notification?.body ??
         message.data['body']?.toString() ??
-        'พร้อมให้ไรเดอร์รับสินค้า';
+        L10n.shopReadyForPickupBody;
 
     await _showShopReadyTrayNotification(
       orderId: orderId,
@@ -175,8 +176,8 @@ class RiderOrderWorkflowService {
     if (showTrayNotification) {
       await _showShopReadyTrayNotification(
         orderId: orderId,
-        title: 'ร้านเตรียมสินค้าเสร็จแล้ว',
-        body: 'พร้อมให้ไรเดอร์รับสินค้า',
+        title: L10n.shopPreparedTitle,
+        body: L10n.shopReadyForPickupBody,
       );
     }
 
@@ -241,8 +242,8 @@ class RiderOrderWorkflowService {
 
     final orderCode = (orderData['orderCode'] as String?)?.trim();
     final orderCodeLabel = orderCode?.isNotEmpty == true
-        ? 'ออเดอร์ #$orderCode'
-        : 'ออเดอร์ #${orderId.substring(0, orderId.length.clamp(0, 8))}';
+        ? L10n.orderHashLabel(orderCode!)
+        : L10n.orderHashLabel(orderId.substring(0, orderId.length.clamp(0, 8)));
     final shopName = (orderData['shopName'] as String?)?.trim() ?? '';
 
     _isDialogOpen = true;
@@ -254,7 +255,7 @@ class RiderOrderWorkflowService {
           return RiderOrderWorkflowDialog(
             step: step,
             orderCodeLabel: orderCodeLabel,
-            shopName: shopName.isNotEmpty ? 'ร้าน: $shopName' : '',
+            shopName: shopName.isNotEmpty ? L10n.shopLabel(shopName) : '',
             onAction: (action) {
               unawaited(
                 _handleWorkflowAction(

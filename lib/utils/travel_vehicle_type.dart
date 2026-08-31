@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
+
 enum TravelVehicleType { motorcycle, sedan, pickup }
 
 extension TravelVehicleTypePresentation on TravelVehicleType {
@@ -28,11 +30,11 @@ extension TravelVehicleTypePresentation on TravelVehicleType {
   String get label {
     switch (this) {
       case TravelVehicleType.motorcycle:
-        return 'มอเตอร์ไซค์';
+        return L10n.paymentVehicleMotorcycle;
       case TravelVehicleType.sedan:
-        return 'รถเก๋ง';
+        return L10n.paymentVehicleSedan;
       case TravelVehicleType.pickup:
-        return 'รถกระบะ';
+        return L10n.paymentVehiclePickup;
     }
   }
 

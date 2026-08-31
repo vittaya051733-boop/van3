@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'l10n/l10n.dart';
 import 'call_screen.dart';
 import 'models/user_profile.dart';
 import 'services/chat_warmup_cache.dart';
@@ -75,10 +76,10 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
     try {
       final myUid = _myUid;
       if (myUid == null || myUid.trim().isEmpty) {
-        throw Exception('ไม่พบผู้ใช้ปัจจุบัน');
+        throw Exception(L10n.currentUserNotFound);
       }
       if (myUid == widget.peerUid) {
-        throw Exception('ไม่สามารถเริ่มแชทกับบัญชีตัวเองได้');
+        throw Exception(L10n.cannotStartChatWithSelf);
       }
 
       unawaited(_ensureChatDoc());
@@ -92,7 +93,7 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _initError = 'ไม่สามารถเริ่มห้องแชทได้: $e';
+        _initError = L10n.startChatRoomFailed(e);
       });
     }
   }
@@ -102,7 +103,7 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
     if (phone == null || phone.trim().isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('ไม่พบเบอร์โทรของคู่แชท')),
+          SnackBar(content: Text(L10n.peerPhoneNotFound)),
         );
       }
       return;
@@ -115,7 +116,7 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
     final ok = await launchUrl(uri);
     if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('ไม่สามารถโทรออกได้')),
+        SnackBar(content: Text(L10n.cannotPlaceCall)),
       );
     }
   }
@@ -126,20 +127,20 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
         ? ' • Order ${orderId.length > 8 ? orderId.substring(0, 8) : orderId}'
         : '';
     return AppBar(
-      title: Text('แชตกับ ${widget.peerLabel}$orderSuffix'),
+      title: Text(L10n.chatWith(widget.peerLabel, orderSuffix: orderSuffix)),
       actions: [
         IconButton(
-          tooltip: 'โทรด้วยเสียง',
+          tooltip: L10n.voiceCallTooltip,
           onPressed: _startingCall ? null : () => _startCall(isVideo: false),
           icon: const Icon(Icons.call_outlined),
         ),
         IconButton(
-          tooltip: 'วิดีโอคอล',
+          tooltip: L10n.videoCallTooltip,
           onPressed: _startingCall ? null : () => _startCall(isVideo: true),
           icon: const Icon(Icons.videocam_outlined),
         ),
         IconButton(
-          tooltip: _peerPhone == null ? 'ไม่พบเบอร์โทร' : 'โทรปกติ',
+          tooltip: _peerPhone == null ? L10n.peerPhoneNotFound : L10n.regularCallTooltip,
           onPressed: _peerPhone == null ? null : _callPeerPhone,
           icon: const Icon(Icons.phone_in_talk_rounded),
         ),
@@ -150,7 +151,7 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
   Future<UserProfile> _buildCurrentUserProfile() async {
     final currentUser = FirebaseAuth.instance.currentUser;
     if (currentUser == null) {
-      throw Exception('ไม่พบผู้ใช้ปัจจุบัน');
+      throw Exception(L10n.currentUserNotFound);
     }
 
     try {
@@ -169,7 +170,7 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
       uid: currentUser.uid,
       displayName: (currentUser.displayName?.trim().isNotEmpty ?? false)
           ? currentUser.displayName!.trim()
-          : 'ไรเดอร์',
+          : L10n.rider,
       phoneNumber: currentUser.phoneNumber,
       photoUrl: currentUser.photoURL,
     );
@@ -213,7 +214,7 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('เริ่มการโทรไม่สำเร็จ: $e')),
+        SnackBar(content: Text(L10n.startCallFailed(e))),
       );
     } finally {
       if (mounted) {
@@ -225,7 +226,7 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
   Future<void> _ensureChatDoc() async {
     final myUid = _myUid;
     if (myUid == null) {
-      throw Exception('ไม่พบผู้ใช้');
+      throw Exception(L10n.userNotFound);
     }
 
     final caller = await _buildCurrentUserProfile();
@@ -318,7 +319,7 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('ส่งข้อความไม่สำเร็จ: $e')),
+          SnackBar(content: Text(L10n.sendMessageFailed(e))),
         );
       }
     } finally {
@@ -340,7 +341,7 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
           children: [
             ListTile(
               leading: const Icon(Icons.photo_library),
-              title: const Text('เลือกรูปจากคลังภาพ'),
+              title: Text(L10n.pickFromGallery),
               onTap: () {
                 Navigator.pop(ctx);
                 _pickImage(ImageSource.gallery);
@@ -348,7 +349,7 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
             ),
             ListTile(
               leading: const Icon(Icons.photo_camera),
-              title: const Text('ถ่ายรูป'),
+              title: Text(L10n.takePhoto),
               onTap: () {
                 Navigator.pop(ctx);
                 _pickImage(ImageSource.camera);
@@ -356,7 +357,7 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
             ),
             ListTile(
               leading: const Icon(Icons.videocam),
-              title: const Text('เลือกวิดีโอ'),
+              title: Text(L10n.pickVideo),
               onTap: () {
                 Navigator.pop(ctx);
                 _pickVideo();
@@ -364,7 +365,7 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
             ),
             ListTile(
               leading: const Icon(Icons.attach_file),
-              title: const Text('เลือกไฟล์เอกสาร'),
+              title: Text(L10n.pickDocument),
               onTap: () {
                 Navigator.pop(ctx);
                 _pickFile();
@@ -487,7 +488,7 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('อัปโหลดไฟล์ไม่สำเร็จ: $e')),
+        SnackBar(content: Text(L10n.uploadFileFailed(e))),
       );
     } finally {
       if (mounted) {
@@ -499,11 +500,11 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
   String _summaryForType(String type, String fileName) {
     switch (type) {
       case 'image':
-        return 'ส่งรูปภาพ';
+        return L10n.sentImage;
       case 'video':
-        return 'ส่งวิดีโอ';
+        return L10n.sentVideo;
       case 'file':
-        return 'ส่งไฟล์ $fileName';
+        return L10n.sentFile(fileName);
       default:
         return fileName;
     }
@@ -532,7 +533,7 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
       'body': trimmed,
       'message': trimmed,
       'senderId': myUid,
-      'senderName': senderName.trim().isEmpty ? 'ไรเดอร์' : senderName.trim(),
+      'senderName': senderName.trim().isEmpty ? L10n.rider : senderName.trim(),
       'read': false,
       'createdAt': FieldValue.serverTimestamp(),
       'source': 'van3_rider',
@@ -545,8 +546,8 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
   Widget build(BuildContext context) {
     final myUid = _myUid;
     if (myUid == null) {
-      return const Scaffold(
-        body: Center(child: Text('กรุณาเข้าสู่ระบบใหม่')),
+      return Scaffold(
+        body: Center(child: Text(L10n.signInRequiredAgain)),
       );
     }
 
@@ -570,7 +571,7 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
                     unawaited(_prepareChat());
                   },
                   icon: const Icon(Icons.refresh),
-                  label: const Text('ลองอีกครั้ง'),
+                  label: Text(L10n.retry),
                 ),
               ],
             ),
@@ -598,14 +599,14 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
                   return const Center(child: CircularProgressIndicator());
                 }
                 if (snapshot.hasError) {
-                  return Center(child: Text('โหลดแชตไม่สำเร็จ: ${snapshot.error}'));
+                  return Center(child: Text(L10n.loadChatFailed(snapshot.error!)));
                 }
 
                 if (messages.isNotEmpty) {
                   _markChatAsRead();
                 }
                 if (messages.isEmpty) {
-                  return const Center(child: Text('เริ่มสนทนาได้เลย'));
+                  return Center(child: Text(L10n.startConversation));
                 }
 
                 return ListView.builder(
@@ -662,9 +663,9 @@ class _RiderChatRoomScreenState extends State<RiderChatRoomScreen> {
                       minLines: 1,
                       maxLines: 4,
                       onSubmitted: (_) => _sendText(),
-                      decoration: const InputDecoration(
-                        hintText: 'พิมพ์ข้อความ...',
-                        border: OutlineInputBorder(),
+                      decoration: InputDecoration(
+                        hintText: L10n.typeMessageHint,
+                        border: const OutlineInputBorder(),
                       ),
                     ),
                   ),
@@ -729,7 +730,7 @@ class _ChatMessageContent extends StatelessWidget {
       case 'video':
         return _AttachmentTile(
           icon: Icons.videocam,
-          label: fileName ?? 'ไฟล์วิดีโอ',
+          label: fileName ?? L10n.videoFile,
           subtitle: _formatSize(fileSize),
           textColor: textColor,
           onTap: mediaUrl == null || mediaUrl!.isEmpty ? null : () => _openUrl(mediaUrl!),
@@ -737,7 +738,7 @@ class _ChatMessageContent extends StatelessWidget {
       case 'file':
         return _AttachmentTile(
           icon: Icons.description,
-          label: fileName ?? 'ไฟล์แนบ',
+          label: fileName ?? L10n.attachmentFile,
           subtitle: _formatSize(fileSize),
           textColor: textColor,
           onTap: mediaUrl == null || mediaUrl!.isEmpty ? null : () => _openUrl(mediaUrl!),

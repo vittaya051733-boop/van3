@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
+import '../l10n/l10n.dart';
 import '../utils/upload_image_compressor.dart';
 import 'admin_support_config.dart';
 
@@ -106,7 +107,7 @@ class AdminSupportMessage {
       id: doc.id,
       senderRole: (data['senderRole'] as String?)?.trim() ?? 'requester',
       senderUid: (data['senderUid'] as String?)?.trim() ?? '',
-      senderName: (data['senderName'] as String?)?.trim() ?? 'ผู้ใช้',
+      senderName: (data['senderName'] as String?)?.trim() ?? L10n.defaultUser,
       message: (data['message'] as String?)?.trim() ?? '',
       imageUrls: ((data['imageUrls'] as List?) ?? const <dynamic>[])
           .whereType<String>()
@@ -189,18 +190,19 @@ class AdminSupportService {
     required String topicLabel,
     required String message,
     List<File> imageFiles = const <File>[],
+    String? orderId,
   }) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      throw StateError('กรุณาเข้าสู่ระบบก่อนติดต่อแอดมิน');
+      throw StateError(L10n.adminSupportSignInRequired);
     }
 
     final trimmedMessage = message.trim();
     if (trimmedMessage.isEmpty) {
-      throw ArgumentError('กรุณาระบุรายละเอียด');
+      throw ArgumentError(L10n.adminSupportDetailsRequired);
     }
     if (trimmedMessage.length > maxMessageLength) {
-      throw ArgumentError('รายละเอียดยาวเกินไป');
+      throw ArgumentError(L10n.adminSupportDetailsTooLong);
     }
 
     final requesterName = _resolveRequesterName(user);
@@ -233,6 +235,7 @@ class AdminSupportService {
       'unreadForAdmin': true,
       'lastMessagePreview': preview,
       'lastMessageRole': 'requester',
+      if ((orderId ?? '').trim().isNotEmpty) 'orderId': orderId!.trim(),
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
       'lastMessageAt': FieldValue.serverTimestamp(),
@@ -248,28 +251,28 @@ class AdminSupportService {
   }) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      throw StateError('กรุณาเข้าสู่ระบบก่อน');
+      throw StateError(L10n.signInRequiredFirst);
     }
 
     final trimmedMessage = message.trim();
     if (trimmedMessage.isEmpty) {
-      throw ArgumentError('กรุณาระบุข้อความ');
+      throw ArgumentError(L10n.adminSupportMessageRequired);
     }
     if (trimmedMessage.length > maxMessageLength) {
-      throw ArgumentError('ข้อความยาวเกินไป');
+      throw ArgumentError(L10n.adminSupportMessageTooLong);
     }
 
     final ticketRef = _tickets.doc(ticketId);
     final ticketSnap = await ticketRef.get();
     if (!ticketSnap.exists) {
-      throw StateError('ไม่พบข้อความ');
+      throw StateError(L10n.adminSupportTicketNotFound);
     }
     final ticketData = ticketSnap.data() ?? <String, dynamic>{};
     if (ticketData['requesterUid'] != user.uid) {
-      throw StateError('ไม่มีสิทธิ์ตอบข้อความนี้');
+      throw StateError(L10n.adminSupportNoReplyPermission);
     }
     if (_isContactClosedMap(ticketData)) {
-      throw StateError('เรื่องนี้ปิดแล้ว — ไม่สามารถส่งข้อความเพิ่มได้');
+      throw StateError(L10n.adminSupportTicketClosedNoSend);
     }
 
     final imageUrls = await _uploadImages(
@@ -365,7 +368,7 @@ class AdminSupportService {
     if (phone != null && phone.isNotEmpty) {
       return phone;
     }
-    return 'ผู้ใช้';
+    return L10n.defaultUser;
   }
 
   static String _preview(String message) {

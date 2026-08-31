@@ -1,0 +1,36 @@
+---
+description: ก่อนแก้ Firebase — จำแนก SHARED/SELF/CROSS-WRITE (van1–4)
+alwaysApply: true
+---
+
+# Van Ecosystem — Change Gate (บังคับก่อนแก้ Firebase)
+
+อ่าน: `..\van2\scripts\DEPLOY_RISK_MATRIX.md` + `..\van2\scripts\VAN_ECOSYSTEM_CROSS_WRITE.md`
+
+## 3 คำถาม (ตอบในใจหรือสรุปให้ user ก่อนแก้)
+
+1. **SHARED / SELF / CROSS-WRITE?**
+   - **SHARED** — rules, Auth, App Check, schema collection ร่วม → deploy **van2** + smoke **van3**
+   - **SELF** — storage/hosting/functions แอปเดียว
+   - **CROSS-WRITE** — van4 เขียน → van2/van1/van3 อ่าน → แก้ **ทั้ง writer + consumer**
+
+2. **แอปไหนต้องเทสหลัง deploy?**
+
+   | แก้อะไร | เทส |
+   |---------|-----|
+   | `firestore.rules` | **van3 online ทันที** → van2 order → van1 orders |
+   | `orders` / `riders` | **van3** listener + popup job |
+   | boot / App Check | **van3 เท่านั้น** |
+
+3. **Deploy อะไรบ้าง?** หลัง SHARED deploy → **van3 smoke ขั้นตอนที่ห้ามข้าม**
+
+## ห้าม (van3)
+
+- Deploy Firestore default / Functions (ไม่มี codebase)
+- `firebase deploy` แบบ raw
+
+## Deploy ที่ถูก (van3)
+
+```powershell
+..\van2\scripts\deploy-self.ps1 -App van3 -Target storage -ConfirmDeploy "APPROVE:van3:van-merchant" -FinalAcknowledge "YES I UNDERSTAND"
+```

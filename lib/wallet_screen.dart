@@ -1,13 +1,17 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
+import 'utils/guarded_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:qr_flutter/qr_flutter.dart';
 
+import 'l10n/l10n.dart';
 import 'wallet_top_up_dialog.dart';
 import 'wallet_withdraw_dialog.dart';
+import 'widgets/security_pin_verify_dialog.dart';
+import 'services/app_unlock_session.dart';
 import 'services/rider_orders_service.dart';
+import 'services/security_pin_service.dart';
 import 'utils/order_pay_at_destination.dart';
 import 'utils/settlement_payout_support.dart';
 
@@ -22,6 +26,7 @@ class _WalletScreenState extends State<WalletScreen> {
   double _currentCredit = 0.0;
   double _withdrawableBalance = 0.0;
   String? _uid;
+  bool _withdrawFlowBusy = false;
 
   static const Color _dashboardOrangeTop = Color(0xFFFF9F1C);
   static const Color _dashboardOrangeMid = Color(0xFFFF6B00);
@@ -109,7 +114,7 @@ class _WalletScreenState extends State<WalletScreen> {
 
   Widget _buildCreditsHistory(String uid) {
     if (uid.isEmpty) {
-      return const Text('กรุณาเข้าสู่ระบบเพื่อดูประวัติ');
+      return Text(L10n.signInRequiredForHistory);
     }
 
     final creditStream = FirebaseFirestore.instance
@@ -129,9 +134,9 @@ class _WalletScreenState extends State<WalletScreen> {
         }
 
         if (creditSnapshot.hasError) {
-          return const Padding(
-            padding: EdgeInsets.symmetric(vertical: 12),
-            child: Text('โหลดประวัติไม่สำเร็จ'),
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Text(L10n.loadHistoryFailed),
           );
         }
 
@@ -146,9 +151,9 @@ class _WalletScreenState extends State<WalletScreen> {
             }
 
             if (orderSnapshot.hasError) {
-              return const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text('โหลดประวัติค่าส่งไม่สำเร็จ'),
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text(L10n.loadDeliveryHistoryFailed),
               );
             }
 
@@ -167,28 +172,28 @@ class _WalletScreenState extends State<WalletScreen> {
 
               final creditType = data['type']?.toString().trim();
               final orderId = data['orderId']?.toString().trim();
-              String title = isTopUp ? 'เติมเครดิต' : 'หักเครดิต';
+              String title = isTopUp ? L10n.creditTopUp : L10n.creditDeduct;
               if (creditType == 'order_pay_at_destination_hold') {
-                title = 'หักเครดิต (รับงานจ่ายปลายทาง)';
+                title = L10n.creditDeductPayAtDestination;
               } else if (creditType == 'order_pay_at_destination_release') {
-                title = 'คืนเครดิต (เลิกใช้แล้ว • รับปลายทาง)';
+                title = L10n.creditReleasePayAtDestination;
               } else if (creditType == 'order_cod_rider_credit_release') {
-                title = 'รายได้ค่าส่ง/ค่าโดยสาร (หลังหัก GP)';
+                title = L10n.riderIncomeAfterGp;
               } else if (provider == 'slipok' && status == 'verified') {
-                title = 'เติมเครดิต (ตรวจสลิป)';
+                title = L10n.creditTopUpSlipVerified;
               } else if (provider != null && provider.isNotEmpty) {
-                title = '$title ($provider)';
+                title = L10n.creditTitleWithProvider(title, provider);
               }
 
               final subtitleParts = <String>[];
               if (orderId != null && orderId.isNotEmpty) {
-                subtitleParts.add('ออเดอร์: $orderId');
+                subtitleParts.add(L10n.orderLabelWithCode(orderId));
               }
               if (paymentGroupId != null && paymentGroupId.isNotEmpty) {
-                subtitleParts.add('รหัส: $paymentGroupId');
+                subtitleParts.add(L10n.codeLabel(paymentGroupId));
               }
               if (slipFeedbackId != null && slipFeedbackId.isNotEmpty) {
-                subtitleParts.add('SlipOK: $slipFeedbackId');
+                subtitleParts.add(L10n.slipOkLabel(slipFeedbackId));
               }
 
               items.add(
@@ -223,10 +228,10 @@ class _WalletScreenState extends State<WalletScreen> {
               if (creditRelease != null && !creditRelease.isReleased) {
                 items.add(
                   _WalletHistoryItem(
-                    title: 'รอปล่อยเครดิต${isCod ? ' (จ่ายปลายทาง)' : ''}',
+                    title: L10n.pendingCreditReleaseCod(isCod),
                     subtitle: orderCode == null || orderCode.isEmpty
                         ? creditRelease.displayStatus
-                        : 'ออเดอร์: $orderCode • ${creditRelease.displayStatus}',
+                        : '${L10n.orderLabelWithCode(orderCode)} • ${creditRelease.displayStatus}',
                     amount: netIncome,
                     happenedAt: deliveredAt,
                     icon: Icons.hourglass_top_rounded,
@@ -239,10 +244,10 @@ class _WalletScreenState extends State<WalletScreen> {
                 final collected = resolvePayAtDestinationHoldAmount(data);
                 items.add(
                   _WalletHistoryItem(
-                    title: 'รายได้ค่าส่งสุทธิ (รับปลายทาง)',
+                    title: L10n.netDeliveryIncomePayAtDestination,
                     subtitle: orderCode == null || orderCode.isEmpty
-                        ? 'เก็บเงินสด THB ${collected.toStringAsFixed(1)}'
-                        : 'ออเดอร์: $orderCode • เก็บเงินสด THB ${collected.toStringAsFixed(1)}',
+                        ? L10n.cashCollectedThb(collected)
+                        : L10n.orderCashCollected(orderCode, collected),
                     amount: netIncome,
                     happenedAt: deliveredAt,
                     icon: Icons.payments_outlined,
@@ -254,8 +259,10 @@ class _WalletScreenState extends State<WalletScreen> {
 
               items.add(
                 _WalletHistoryItem(
-                  title: 'รายได้ค่าส่งสุทธิ',
-                  subtitle: orderCode == null || orderCode.isEmpty ? 'งานส่งสำเร็จ' : 'ออเดอร์: $orderCode',
+                  title: L10n.netDeliveryIncome,
+                  subtitle: orderCode == null || orderCode.isEmpty
+                      ? L10n.jobDeliveredSuccess
+                      : L10n.orderLabelWithCode(orderCode),
                   amount: netIncome,
                   happenedAt: deliveredAt,
                   icon: Icons.local_shipping_outlined,
@@ -272,9 +279,9 @@ class _WalletScreenState extends State<WalletScreen> {
 
             final visibleItems = items.take(50).toList();
             if (visibleItems.isEmpty) {
-              return const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text('ยังไม่มีรายการ'),
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text(L10n.noItemsYet),
               );
             }
 
@@ -296,7 +303,7 @@ class _WalletScreenState extends State<WalletScreen> {
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Text(
-                        '${item.amount.toStringAsFixed(2)} บาท',
+                        L10n.amountBaht(item.amount),
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           color: isPositive ? Colors.green : Colors.redAccent,
@@ -367,18 +374,18 @@ class _WalletScreenState extends State<WalletScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'รายได้สุทธิของวัน',
-                      style: TextStyle(color: _dashboardCream, fontSize: 13, fontWeight: FontWeight.w600),
+                    Text(
+                      L10n.todayNetIncome,
+                      style: const TextStyle(color: _dashboardCream, fontSize: 13, fontWeight: FontWeight.w600),
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      '${netIncomeToday.toStringAsFixed(2)} บาท',
+                      L10n.amountBaht(netIncomeToday),
                       style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800),
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'ส่งสำเร็จวันนี้ $deliveredTodayCount งาน',
+                      L10n.deliveredTodayCount(deliveredTodayCount),
                       style: const TextStyle(color: _dashboardCream, fontSize: 12),
                     ),
                   ],
@@ -413,11 +420,10 @@ class _WalletScreenState extends State<WalletScreen> {
     }
 
     try {
-      final result = await FirebaseFunctions.instanceFor(
-        region: 'asia-southeast1',
-      ).httpsCallable('getWithdrawableBalance').call(<String, dynamic>{
-        'actorType': 'rider',
-      });
+      final result = await GuardedFunctions.call(
+        'getWithdrawableBalance',
+        parameters: <String, dynamic>{'actorType': 'rider'},
+      );
       final data = result.data is Map
           ? Map<String, dynamic>.from(result.data as Map)
           : const <String, dynamic>{};
@@ -455,27 +461,74 @@ class _WalletScreenState extends State<WalletScreen> {
     }
   }
 
-  Future<void> _requestWithdraw() async {
+  Future<bool> _ensureWithdrawAuthorized() async {
+    // Already verified PIN/biometric at AppUnlockGate this session.
+    if (AppUnlockSession.isUnlocked) {
+      return true;
+    }
+
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      _showSnack('กรุณาเข้าสู่ระบบก่อน');
+      return false;
+    }
+
+    final hasPin = await SecurityPinService.instance.hasPin(user.uid);
+    if (!hasPin) {
+      _showSnack(L10n.noPinOnDeviceForWithdraw);
+      return false;
+    }
+
+    if (!mounted) {
+      return false;
+    }
+
+    return verifySecurityPinForSensitiveAction(
+      context,
+      title: L10n.confirmBeforeWithdraw,
+    );
+  }
+
+  Future<void> _requestWithdraw() async {
+    if (_withdrawFlowBusy) {
       return;
     }
 
-    final result = await showDialog<double>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const WalletWithdrawDialog(actorType: 'rider'),
-    );
-
-    if (!mounted || result == null) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      _showSnack(L10n.signInRequiredFirst);
       return;
     }
 
-    await _fetchCurrentCredit();
-    _showSnack(
-      'ส่งคำขอถอน ${result.toStringAsFixed(2)} บาท — กำลังโอนเข้าบัญชี',
-    );
+    setState(() => _withdrawFlowBusy = true);
+    try {
+      final authorized = await _ensureWithdrawAuthorized();
+      if (!authorized || !mounted) {
+        return;
+      }
+
+      final result = await showDialog<double>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) =>
+            const WalletWithdrawDialog(actorType: 'rider'),
+      );
+
+      if (!mounted || result == null) {
+        return;
+      }
+
+      await _fetchCurrentCredit();
+      _showSnack(L10n.withdrawRequestSubmitted(result));
+    } catch (error, stack) {
+      if (kDebugMode) {
+        debugPrint('wallet withdraw flow failed: $error\n$stack');
+      }
+      _showSnack(L10n.openWithdrawFailed);
+    } finally {
+      if (mounted) {
+        setState(() => _withdrawFlowBusy = false);
+      }
+    }
   }
 
   Future<void> _promptTopUpAmount() async {
@@ -510,7 +563,7 @@ class _WalletScreenState extends State<WalletScreen> {
     return Scaffold(
       backgroundColor: _dashboardOrangeMid,
       appBar: AppBar(
-        title: const Text('กระเป๋าเงิน'),
+        title: Text(L10n.walletTitle),
         backgroundColor: Colors.transparent,
         flexibleSpace: Container(
           decoration: const BoxDecoration(
@@ -542,10 +595,19 @@ class _WalletScreenState extends State<WalletScreen> {
                 child: SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    icon: const Icon(Icons.money_off),
-                    label: const Text('ถอนเงิน'),
+                    icon: _withdrawFlowBusy
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.money_off),
+                    label: Text(_withdrawFlowBusy ? L10n.opening : L10n.withdrawMoney),
                     style: _walletActionButtonStyle(),
-                    onPressed: _requestWithdraw,
+                    onPressed: _withdrawFlowBusy ? null : _requestWithdraw,
                   ),
                 ),
               ),
@@ -569,19 +631,19 @@ class _WalletScreenState extends State<WalletScreen> {
                             Row(
                               crossAxisAlignment: CrossAxisAlignment.center,
                               children: [
-                                const Expanded(
+                                Expanded(
                                   child: Row(
                                     children: [
-                                      Icon(
+                                      const Icon(
                                         Icons.account_balance_wallet,
                                         color: Colors.white,
                                         size: 32,
                                       ),
-                                      SizedBox(width: 12),
+                                      const SizedBox(width: 12),
                                       Flexible(
                                         child: Text(
-                                          'ยอดเครดิตคงเหลือ',
-                                          style: TextStyle(fontSize: 18, color: Colors.white),
+                                          L10n.creditBalanceRemaining,
+                                          style: const TextStyle(fontSize: 18, color: Colors.white),
                                           maxLines: 2,
                                           overflow: TextOverflow.ellipsis,
                                         ),
@@ -600,9 +662,9 @@ class _WalletScreenState extends State<WalletScreen> {
                                       padding: const EdgeInsets.symmetric(horizontal: 12),
                                       minimumSize: const Size(0, 36),
                                     ),
-                                    child: const FittedBox(
+                                    child: FittedBox(
                                       fit: BoxFit.scaleDown,
-                                      child: Text('เติมเครดิต'),
+                                      child: Text(L10n.topUpCredit),
                                     ),
                                   ),
                                 ),
@@ -610,7 +672,7 @@ class _WalletScreenState extends State<WalletScreen> {
                             ),
                             const SizedBox(height: 12),
                             Text(
-                              '${_currentCredit.toStringAsFixed(2)} บาท',
+                              L10n.amountBaht(_currentCredit),
                               style: const TextStyle(
                                 fontSize: 32,
                                 fontWeight: FontWeight.bold,
@@ -620,16 +682,16 @@ class _WalletScreenState extends State<WalletScreen> {
                             if ((_withdrawableBalance - _currentCredit).abs() > 0.01) ...[
                               const SizedBox(height: 4),
                               Text(
-                                'ถอนได้ ${_withdrawableBalance.toStringAsFixed(2)} บาท',
+                                L10n.withdrawableBalance(_withdrawableBalance),
                                 style: const TextStyle(color: _dashboardCream, fontSize: 13),
                               ),
                             ],
                             const SizedBox(height: 8),
                             Row(
                               children: [
-                                const Text(
-                                  'UID: ',
-                                  style: TextStyle(color: Colors.white70),
+                                Text(
+                                  L10n.uidPrefix,
+                                  style: const TextStyle(color: Colors.white70),
                                 ),
                                 Expanded(
                                   child: SelectableText(
@@ -644,10 +706,10 @@ class _WalletScreenState extends State<WalletScreen> {
                                 ),
                                 IconButton(
                                   icon: const Icon(Icons.copy, color: Colors.white),
-                                  tooltip: 'คัดลอก UID เต็ม',
+                                  tooltip: L10n.copyFullUid,
                                   onPressed: () {
                                     Clipboard.setData(ClipboardData(text: uid));
-                                    _showSnack('คัดลอก UID เรียบร้อย');
+                                    _showSnack(L10n.uidCopied);
                                   },
                                 ),
                               ],
@@ -657,62 +719,6 @@ class _WalletScreenState extends State<WalletScreen> {
                       ),
                       const SizedBox(height: 12),
                       _buildTodayNetIncomeCard(uid),
-                      const SizedBox(height: 18),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Column(
-                            children: [
-                              GestureDetector(
-                                onTap: () {
-                                  showDialog<void>(
-                                    context: context,
-                                    barrierDismissible: true,
-                                    builder: (context) => GestureDetector(
-                                      onTap: () => Navigator.of(context).pop(),
-                                      child: Dialog(
-                                        backgroundColor: Colors.transparent,
-                                        child: Center(
-                                          child: Container(
-                                            decoration: BoxDecoration(
-                                              color: Colors.white,
-                                              borderRadius: BorderRadius.circular(24),
-                                              boxShadow: const [
-                                                BoxShadow(color: Colors.black26, blurRadius: 12),
-                                              ],
-                                            ),
-                                            padding: const EdgeInsets.all(32),
-                                            child: QrImageView(
-                                              data: uid,
-                                              size: 280,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  );
-                                },
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(16),
-                                    boxShadow: const [
-                                      BoxShadow(color: Color(0x24000000), blurRadius: 10),
-                                    ],
-                                  ),
-                                  padding: const EdgeInsets.all(12),
-                                  child: QrImageView(
-                                    data: uid,
-                                    size: 100,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              const Text('QR รับเงิน', style: TextStyle(fontSize: 14, color: _dashboardCream)),
-                            ],
-                          ),
-                        ],
-                      ),
                       const SizedBox(height: 24),
                       Card(
                         shape: RoundedRectangleBorder(
@@ -725,9 +731,9 @@ class _WalletScreenState extends State<WalletScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text(
-                                'ประวัติเติมเครดิตและค่าส่ง',
-                                style: TextStyle(
+                              Text(
+                                L10n.creditAndDeliveryHistory,
+                                style: const TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.bold,
                                   color: _dashboardText,

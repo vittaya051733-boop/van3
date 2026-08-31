@@ -1,6 +1,8 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'l10n/l10n.dart';
+
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({super.key});
 
@@ -21,7 +23,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   Future<void> _sendReset() async {
     final email = _emailController.text.trim();
     if (email.isEmpty) {
-      _showSnack('กรุณากรอกอีเมล');
+      _showSnack(L10n.pleaseEnterEmail);
       return;
     }
 
@@ -29,11 +31,11 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     try {
       await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
       if (!mounted) return;
-      _showSnack('ส่งลิงก์รีเซ็ตรหัสผ่านแล้ว');
+      _showSnack(L10n.resetLinkSent);
       Navigator.of(context).pop();
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
-      _showSnack(e.message ?? 'ไม่สามารถส่งลิงก์รีเซ็ตได้');
+      _showSnack(e.message ?? L10n.resetLinkFailed);
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -48,16 +50,16 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('ลืมรหัสผ่าน')),
+      appBar: AppBar(title: Text(L10n.forgotPassword)),
       body: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           children: [
             TextField(
               controller: _emailController,
-              decoration: const InputDecoration(
-                labelText: 'อีเมล',
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: L10n.email,
+                border: const OutlineInputBorder(),
               ),
             ),
             const SizedBox(height: 16),
@@ -71,7 +73,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                         height: 20,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Text('ส่งลิงก์รีเซ็ต'),
+                    : Text(L10n.sendResetLink),
               ),
             ),
           ],

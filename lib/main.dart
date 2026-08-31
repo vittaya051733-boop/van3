@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -19,6 +20,7 @@ import 'incoming_order_screen.dart';
 import 'utils/rider_incoming_order_filter.dart';
 import 'login_screen.dart';
 import 'privacy_launch_gate.dart';
+import 'widgets/app_unlock_gate.dart';
 import 'rider_onboarding_gate.dart';
 import 'rider_registration_screen.dart';
 import 'rider_jobs_screen.dart';
@@ -29,6 +31,8 @@ import 'services/observability_service.dart';
 import 'services/privacy_consent_service.dart';
 import 'services/rider_alert_permissions.dart';
 import 'services/rider_orders_service.dart';
+import 'services/locale_service.dart';
+import 'l10n/l10n.dart';
 import 'welcome_screen.dart';
 import 'utils/app_colors.dart';
 import 'firebase_options.dart';
@@ -148,6 +152,10 @@ void main() async {
     'GlobalOrderAlertService',
     GlobalOrderAlertService.instance.initialize,
   );
+  await _runStartupStep(
+    'LocaleService',
+    LocaleService.instance.load,
+  );
   if (kDebugMode) {
     debugPrint('[van3:startup] runApp');
   }
@@ -160,18 +168,18 @@ class OverlayAlertService {
   static final Set<String> _shownOrderAlertKeys = <String>{};
   static final fln.FlutterLocalNotificationsPlugin _localNotifications =
       fln.FlutterLocalNotificationsPlugin();
-  static const fln.AndroidNotificationChannel _urgentChannel =
+  static fln.AndroidNotificationChannel get _urgentChannel =>
       fln.AndroidNotificationChannel(
         'rider_jobs_urgent_sound',
-        'Rider Jobs Urgent',
-        description: 'Urgent rider job alerts with sound',
+        L10n.urgentJobsChannelName,
+        description: L10n.urgentJobsChannelDesc,
         importance: fln.Importance.max,
       );
-  static const fln.AndroidNotificationChannel _announcementChannel =
+  static fln.AndroidNotificationChannel get _announcementChannel =>
       fln.AndroidNotificationChannel(
         'rider_announcements',
-        'ประกาศจากแอดมิน',
-        description: 'ประกาศและแจ้งเตือนทั่วไปจากแพลตฟอร์ม',
+        L10n.adminAnnouncementTitle,
+        description: L10n.adminAnnouncementChannelDesc,
         importance: fln.Importance.high,
       );
 
@@ -332,7 +340,7 @@ class OverlayAlertService {
   static Future<void> _showAnnouncementAlert(RemoteMessage message) async {
     final title = message.notification?.title ??
         message.data['title']?.toString() ??
-        'ประกาศจากแอดมิน';
+        L10n.adminAnnouncementTitle;
     final body = message.notification?.body ??
         message.data['body']?.toString() ??
         '';
@@ -356,14 +364,14 @@ class OverlayAlertService {
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('ปิด'),
+            child: Text(L10n.close),
           ),
           TextButton(
             onPressed: () {
               Navigator.of(dialogContext).pop();
               unawaited(_openNotificationsFromTap());
             },
-            child: const Text('ดูทั้งหมด'),
+            child: Text(L10n.viewAll),
           ),
         ],
       ),
@@ -547,10 +555,10 @@ class OverlayAlertService {
   static Future<void> showOverlayFromMessage(RemoteMessage message) async {
     final title = message.notification?.title ??
         message.data['title']?.toString() ??
-        'มีงานใหม่';
+        L10n.newJobDefaultTitle;
     final body = message.notification?.body ??
         message.data['body']?.toString() ??
-        'มีคำขอเรียกรถใหม่ กรุณาตรวจสอบทันที';
+        L10n.newJobDefaultBody;
     final orderId = _extractOrderId(message.data);
 
     if (_shouldShowInAppDialog(message.data)) {
@@ -685,8 +693,8 @@ class OverlayAlertService {
                                   const SizedBox(height: 4),
                                   Text(
                                     orderId?.isNotEmpty == true
-                                        ? 'Order ID: $orderId'
-                                        : 'มีออเดอร์ใหม่เข้ามาแล้ว',
+                                        ? L10n.orderIdWithValue(orderId!)
+                                        : L10n.newOrderArrived,
                                     style: const TextStyle(
                                       fontSize: 13,
                                       color: Color(0xFF6B7280),
@@ -707,9 +715,9 @@ class OverlayAlertService {
                           ),
                         ),
                         const SizedBox(height: 18),
-                        const Text(
-                          'ออเดอร์นี้ถูกยืนยันแล้ว คุณสามารถเปิดหน้ารับงานได้ทันที',
-                          style: TextStyle(
+                        Text(
+                          L10n.newOrderConfirmedHint,
+                          style: const TextStyle(
                             fontSize: 13,
                             color: Color(0xFF9A3412),
                             fontWeight: FontWeight.w600,
@@ -721,7 +729,7 @@ class OverlayAlertService {
                             Expanded(
                               child: OutlinedButton(
                                 onPressed: () => Navigator.of(dialogContext).pop('dismiss'),
-                                child: const Text('ปิดก่อน'),
+                                child: Text(L10n.dismiss),
                               ),
                             ),
                             const SizedBox(width: 10),
@@ -729,7 +737,7 @@ class OverlayAlertService {
                               child: FilledButton.icon(
                                 onPressed: () => Navigator.of(dialogContext).pop('open_jobs'),
                                 icon: const Icon(Icons.assignment_turned_in_rounded),
-                                label: const Text('เปิดหน้ารับงาน'),
+                                label: Text(L10n.openJobsScreen),
                               ),
                             ),
                           ],
@@ -1073,10 +1081,33 @@ class GlobalOrderAlertService {
   }
 }
 
-class Van3RiderApp extends StatelessWidget {
+class Van3RiderApp extends StatefulWidget {
   const Van3RiderApp({super.key});
 
   static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+  @override
+  State<Van3RiderApp> createState() => _Van3RiderAppState();
+}
+
+class _Van3RiderAppState extends State<Van3RiderApp> {
+  @override
+  void initState() {
+    super.initState();
+    LocaleService.instance.addListener(_onLocaleChanged);
+  }
+
+  void _onLocaleChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  @override
+  void dispose() {
+    LocaleService.instance.removeListener(_onLocaleChanged);
+    super.dispose();
+  }
 
   Future<FirebaseApp> _initializeFirebase() {
     if (Firebase.apps.isNotEmpty) {
@@ -1107,9 +1138,19 @@ class Van3RiderApp extends StatelessWidget {
 
   Widget _buildMaterialApp() {
     return MaterialApp(
-          title: 'Van3 Rider',
+          title: L10n.appTitle,
           debugShowCheckedModeBanner: false,
-          navigatorKey: navigatorKey,
+          navigatorKey: Van3RiderApp.navigatorKey,
+          locale: LocaleService.instance.locale,
+          supportedLocales: const <Locale>[
+            Locale('th', 'TH'),
+            Locale('en', 'US'),
+          ],
+          localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
           theme: ThemeData(
             useMaterial3: true,
             colorScheme: ColorScheme.fromSeed(seedColor: AppColors.accent),
@@ -1132,10 +1173,13 @@ class Van3RiderApp extends StatelessWidget {
           routes: {
             '/login': (context) => const LoginScreen(),
             '/forgot': (context) => const ForgotPasswordScreen(),
-            '/home': (context) => const RiderOnboardingGate(
-              child: PrivacyLaunchGate(
-                app: PrivacyAppKey.van3Rider,
-                child: HomeScreen(),
+            '/home': (context) => const AppUnlockGate(
+              logoAsset: 'assets/app_logo.png',
+              child: RiderOnboardingGate(
+                child: PrivacyLaunchGate(
+                  app: PrivacyAppKey.van3Rider,
+                  child: HomeScreen(),
+                ),
               ),
             ),
             '/welcome': (context) => const WelcomeScreen(),
@@ -1157,10 +1201,13 @@ class Van3RiderApp extends StatelessWidget {
           return const Scaffold(body: Center(child: CircularProgressIndicator()));
         }
         return authSnapshot.hasData
-            ? const RiderOnboardingGate(
-                child: PrivacyLaunchGate(
-                  app: PrivacyAppKey.van3Rider,
-                  child: HomeScreen(),
+            ? const AppUnlockGate(
+                logoAsset: 'assets/app_logo.png',
+                child: RiderOnboardingGate(
+                  child: PrivacyLaunchGate(
+                    app: PrivacyAppKey.van3Rider,
+                    child: HomeScreen(),
+                  ),
                 ),
               )
             : const WelcomeScreen();

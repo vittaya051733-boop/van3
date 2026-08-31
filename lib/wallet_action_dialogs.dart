@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'l10n/l10n.dart';
+
 class ReceiveMoneyDialog extends StatelessWidget {
   const ReceiveMoneyDialog({super.key, required this.uid});
 
@@ -8,11 +10,11 @@ class ReceiveMoneyDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('รับเงิน'),
+      title: Text(L10n.receiveMoney),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text('ให้ลูกค้าสแกน QR หรือกรอก UID ของคุณ'),
+          Text(L10n.receiveMoneyHint),
           const SizedBox(height: 8),
           SelectableText(uid, textAlign: TextAlign.center),
         ],
@@ -20,7 +22,7 @@ class ReceiveMoneyDialog extends StatelessWidget {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('ปิด'),
+          child: Text(L10n.close),
         ),
       ],
     );
@@ -35,17 +37,17 @@ class PayMoneyDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('จ่ายเงิน'),
-      content: const Column(
+      title: Text(L10n.payMoney),
+      content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('กรอก UID ปลายทางและจำนวนเงิน'),
+          Text(L10n.payMoneyHint),
         ],
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('ปิด'),
+          child: Text(L10n.close),
         ),
       ],
     );
@@ -60,17 +62,17 @@ class TransferMoneyDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('โอนเงิน'),
-      content: const Column(
+      title: Text(L10n.transferMoney),
+      content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('กรอก UID ปลายทางและจำนวนเงิน'),
+          Text(L10n.transferMoneyHint),
         ],
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('ปิด'),
+          child: Text(L10n.close),
         ),
       ],
     );

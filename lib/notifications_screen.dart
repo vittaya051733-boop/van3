@@ -2,6 +2,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'l10n/l10n.dart';
+import 'services/locale_service.dart';
+
 class RiderNotificationsScreen extends StatelessWidget {
   const RiderNotificationsScreen({super.key});
 
@@ -70,7 +73,7 @@ class RiderNotificationsScreen extends StatelessWidget {
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('ปิด'),
+              child: Text(L10n.close),
             ),
           ],
         ),
@@ -79,22 +82,29 @@ class RiderNotificationsScreen extends StatelessWidget {
     }
 
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('แจ้งเตือนนี้ไม่มีหน้าที่เชื่อมต่อ')),
+      SnackBar(content: Text(L10n.notificationsNoLinkedScreen)),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: LocaleService.instance,
+      builder: (context, _) => _buildScaffold(context),
+    );
+  }
+
+  Widget _buildScaffold(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
     return Scaffold(
       backgroundColor: const Color(0xFFFFF8F1),
       appBar: AppBar(
-        title: const Text('การแจ้งเตือน'),
+        title: Text(L10n.notificationsTitle),
         backgroundColor: const Color(0xFFFF8A00),
         foregroundColor: Colors.white,
       ),
       body: user == null
-          ? const Center(child: Text('กรุณาเข้าสู่ระบบ'))
+          ? Center(child: Text(L10n.signInRequired))
           : StreamBuilder<List<_RiderNotification>>(
               stream: _watchNotifications(user.uid),
               builder: (context, snapshot) {
@@ -102,17 +112,17 @@ class RiderNotificationsScreen extends StatelessWidget {
                   return const Center(child: CircularProgressIndicator());
                 }
                 if (snapshot.hasError) {
-                  return const Center(
-                    child: Text('โหลดแจ้งเตือนไม่สำเร็จ'),
+                  return Center(
+                    child: Text(L10n.notificationsLoadFailed),
                   );
                 }
 
                 final items = snapshot.data ?? const <_RiderNotification>[];
                 if (items.isEmpty) {
-                  return const Center(
+                  return Center(
                     child: Text(
-                      'ยังไม่มีแจ้งเตือน',
-                      style: TextStyle(color: Color(0xFF6B7280)),
+                      L10n.notificationsEmpty,
+                      style: const TextStyle(color: Color(0xFF6B7280)),
                     ),
                   );
                 }
@@ -127,13 +137,13 @@ class RiderNotificationsScreen extends StatelessWidget {
                           children: <Widget>[
                             Expanded(
                               child: Text(
-                                'มีแจ้งเตือนใหม่ $unreadCount รายการ',
+                                L10n.notificationsUnreadCount(unreadCount),
                                 style: const TextStyle(fontWeight: FontWeight.w700),
                               ),
                             ),
                             TextButton(
                               onPressed: () => _markAllAsRead(items),
-                              child: const Text('อ่านทั้งหมด'),
+                              child: Text(L10n.notificationsMarkAllRead),
                             ),
                           ],
                         ),
@@ -269,7 +279,7 @@ class _RiderNotification {
       reference: doc.reference,
       title: data['title']?.toString().trim().isNotEmpty == true
           ? data['title'].toString().trim()
-          : 'แจ้งเตือนใหม่',
+          : L10n.newNotification,
       body: data['body']?.toString().trim().isNotEmpty == true
           ? data['body'].toString().trim()
           : data['message']?.toString().trim() ?? '',

@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:image_picker/image_picker.dart';
 
+import 'l10n/l10n.dart';
+import 'services/promptpay_qr_payload.dart';
 import 'services/rider_registration_service.dart';
 import 'utils/app_colors.dart';
 
@@ -18,36 +20,28 @@ class RiderProfileEditScreen extends StatefulWidget {
 }
 
 class _RiderProfileEditScreenState extends State<RiderProfileEditScreen> {
-  static const List<String> _thaiBanks = <String>[
-    'ธนาคารกรุงเทพ (BBL)',
-    'ธนาคารกสิกรไทย (KBank)',
-    'ธนาคารไทยพาณิชย์ (SCB)',
-    'ธนาคารกรุงไทย (KTB)',
-    'ธนาคารกรุงศรีอยุธยา (BAY)',
-    'ทีเอ็มบีธนชาต (TTB)',
-    'อื่นๆ',
+  List<MapEntry<String, String>> get _vehicleTypes => <MapEntry<String, String>>[
+    MapEntry('motorcycle', L10n.paymentVehicleMotorcycle),
+    MapEntry('sedan', L10n.paymentVehicleSedan),
+    MapEntry('pickup', L10n.paymentVehiclePickup),
   ];
 
   List<String> get _bankOptions {
+    final banks = L10n.thaiBanks;
     final bank = _selectedBank?.trim();
-    if (bank != null && bank.isNotEmpty && !_thaiBanks.contains(bank)) {
-      return <String>[bank, ..._thaiBanks];
+    if (bank != null && bank.isNotEmpty && !banks.contains(bank)) {
+      return <String>[bank, ...banks];
     }
-    return _thaiBanks;
+    return banks;
   }
-
-  static const List<MapEntry<String, String>> _vehicleTypes =
-      <MapEntry<String, String>>[
-    MapEntry('motorcycle', 'มอเตอร์ไซค์'),
-    MapEntry('sedan', 'รถเก๋ง'),
-    MapEntry('pickup', 'รถกระบะ'),
-  ];
 
   final _formKey = GlobalKey<FormState>();
   final _phoneController = TextEditingController();
   final _nameController = TextEditingController();
   final _accountNumberController = TextEditingController();
   final _accountOwnerController = TextEditingController();
+  final _promptPayPhoneController = TextEditingController();
+  final _promptPayNationalIdController = TextEditingController();
   final _licensePlateController = TextEditingController();
   final _vehicleColorController = TextEditingController();
   final _vehicleBrandModelController = TextEditingController();
@@ -82,6 +76,8 @@ class _RiderProfileEditScreenState extends State<RiderProfileEditScreen> {
     _nameController.dispose();
     _accountNumberController.dispose();
     _accountOwnerController.dispose();
+    _promptPayPhoneController.dispose();
+    _promptPayNationalIdController.dispose();
     _licensePlateController.dispose();
     _vehicleColorController.dispose();
     _vehicleBrandModelController.dispose();
@@ -108,6 +104,8 @@ class _RiderProfileEditScreenState extends State<RiderProfileEditScreen> {
         _phoneController.text = profile.phoneNumber ?? '';
         _accountNumberController.text = profile.accountNumber ?? '';
         _accountOwnerController.text = profile.accountOwner ?? '';
+        _promptPayPhoneController.text = profile.promptPayPhoneNumber ?? '';
+        _promptPayNationalIdController.text = profile.promptPayNationalId ?? '';
         _licensePlateController.text = profile.licensePlate ?? '';
         _vehicleColorController.text = profile.vehicleColor ?? '';
         _vehicleBrandModelController.text = profile.vehicleBrandModel ?? '';
@@ -126,7 +124,7 @@ class _RiderProfileEditScreenState extends State<RiderProfileEditScreen> {
         return;
       }
       setState(() => _loading = false);
-      _showSnack('โหลดข้อมูลไม่สำเร็จ: $error');
+      _showSnack(L10n.loadProfileFailed(error));
     }
   }
 
@@ -149,9 +147,9 @@ class _RiderProfileEditScreenState extends State<RiderProfileEditScreen> {
         return;
       }
       if (error.code == 'already_active') {
-        _showSnack('กรุณารอให้หน้าต่างเลือกรูปปิดก่อน แล้วลองใหม่');
+        _showSnack(L10n.waitForImagePickerClose);
       } else {
-        _showSnack('เลือกรูปไม่สำเร็จ: ${error.message ?? error.code}');
+        _showSnack(L10n.pickImageFailed(error.message ?? error.code));
       }
     } finally {
       if (mounted) {
@@ -163,7 +161,7 @@ class _RiderProfileEditScreenState extends State<RiderProfileEditScreen> {
   Future<String> _uploadImage(File file, String label) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      throw StateError('กรุณาเข้าสู่ระบบก่อนอัปโหลด');
+      throw StateError(L10n.signInBeforeUpload);
     }
     final compressed = await FlutterImageCompress.compressWithFile(
       file.absolute.path,
@@ -193,9 +191,18 @@ class _RiderProfileEditScreenState extends State<RiderProfileEditScreen> {
       return;
     }
 
+    final promptPayError = PromptPayQrPayload.validatePayoutProfile(
+      phone: _promptPayPhoneController.text,
+      nationalId: _promptPayNationalIdController.text,
+    );
+    if (promptPayError != null) {
+      _showSnack('PromptPay: $promptPayError');
+      return;
+    }
+
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      _showSnack('กรุณาเข้าสู่ระบบก่อน');
+      _showSnack(L10n.signInRequiredFirst);
       return;
     }
 
@@ -229,6 +236,8 @@ class _RiderProfileEditScreenState extends State<RiderProfileEditScreen> {
         bankName: _selectedBank,
         accountNumber: _accountNumberController.text.trim(),
         accountOwner: _accountOwnerController.text.trim(),
+        promptPayPhoneNumber: _promptPayPhoneController.text.trim(),
+        promptPayNationalId: _promptPayNationalIdController.text.trim(),
         driverLicenseImageUrl: licenseUrl,
         motorcycleImageUrl: motorcycleUrl,
         bookBankImageUrl: bookBankUrl,
@@ -259,6 +268,8 @@ class _RiderProfileEditScreenState extends State<RiderProfileEditScreen> {
         'bankName': _selectedBank,
         'accountNumber': _accountNumberController.text.trim(),
         'accountOwner': _accountOwnerController.text.trim(),
+        'promptPayPhoneNumber': _promptPayPhoneController.text.trim(),
+        'promptPayNationalId': _promptPayNationalIdController.text.trim(),
         'driverLicenseImageUrl': licenseUrl,
         'motorcycleImageUrl': motorcycleUrl,
         'bookBankImageUrl': bookBankUrl,
@@ -272,13 +283,13 @@ class _RiderProfileEditScreenState extends State<RiderProfileEditScreen> {
       });
 
       if (updated.isCompleteForCustomerTravel) {
-        _showSnack('บันทึกแล้ว — ลูกค้า van2 จะเห็นรูปและข้อมูลรถของคุณ');
+        _showSnack(L10n.profileSavedVan2Visible);
       } else {
-        _showSnack('บันทึกแล้ว — กรุณาเติมรูปโปรไฟล์และข้อมูลรถให้ครบ');
+        _showSnack(L10n.profileSavedIncomplete);
       }
       Navigator.of(context).pop(true);
     } catch (error) {
-      _showSnack('บันทึกไม่สำเร็จ: $error');
+      _showSnack(L10n.saveFailedWithError(error));
     } finally {
       if (mounted) {
         setState(() => _saving = false);
@@ -346,10 +357,10 @@ class _RiderProfileEditScreenState extends State<RiderProfileEditScreen> {
         title: Text(title),
         subtitle: Text(
           _pickingImage
-              ? 'กำลังเปิดคลังรูป...'
+              ? L10n.openingGallery
               : hasImage
-              ? 'แตะเพื่อเปลี่ยนรูป'
-              : 'ยังไม่ได้เลือกรูป',
+              ? L10n.tapToChange
+              : L10n.notSelected,
         ),
         trailing: _pickingImage
             ? const SizedBox(
@@ -367,10 +378,15 @@ class _RiderProfileEditScreenState extends State<RiderProfileEditScreen> {
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
     final travelReady = _loadedProfile?.isCompleteForCustomerTravel == true;
+    final promptPayReady = _loadedProfile?.hasPromptPayForPayout == true ||
+        PromptPayQrPayload.hasValidPayoutProfile(
+          phone: _promptPayPhoneController.text,
+          nationalId: _promptPayNationalIdController.text,
+        );
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('แก้ไขโปรไฟล์ไรเดอร์'),
+        title: Text(L10n.editRiderProfile),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -379,6 +395,24 @@ class _RiderProfileEditScreenState extends State<RiderProfileEditScreen> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                 children: <Widget>[
+                  if (!promptPayReady)
+                    Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF7ED),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFFDBA74)),
+                      ),
+                      child: Text(
+                        PromptPayQrPayload.payoutLinkedBankNotice,
+                        style: const TextStyle(
+                          color: Color(0xFF9A3412),
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
                   if (!travelReady)
                     Container(
                       width: double.infinity,
@@ -389,56 +423,56 @@ class _RiderProfileEditScreenState extends State<RiderProfileEditScreen> {
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(color: const Color(0xFFFDBA74)),
                       ),
-                      child: const Text(
-                        'ข้อมูลรถและรูปโปรไฟล์ยังไม่ครบ — ลูกค้า van2 จะไม่เห็นในหน้าเดินทางจนกว่าจะกรอกครบ',
-                        style: TextStyle(
+                      child: Text(
+                        L10n.profileIncompleteVan2Hint,
+                        style: const TextStyle(
                           color: Color(0xFF9A3412),
                           height: 1.4,
                         ),
                       ),
                     ),
                   _sectionHeader(
-                    'ข้อมูลส่วนตัว',
-                    subtitle: 'แสดงให้ลูกค้าเห็นเมื่อจองงานเดินทาง',
+                    L10n.personalInfoSection,
+                    subtitle: L10n.personalInfoCustomerHint,
                   ),
                   TextFormField(
                     controller: _nameController,
-                    decoration: const InputDecoration(
-                      labelText: 'ชื่อ-นามสกุล',
-                      border: OutlineInputBorder(),
+                    decoration: InputDecoration(
+                      labelText: L10n.fullName,
+                      border: const OutlineInputBorder(),
                     ),
                     validator: (value) =>
-                        value?.trim().isEmpty == true ? 'กรุณากรอกชื่อ' : null,
+                        value?.trim().isEmpty == true ? L10n.pleaseEnterName : null,
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
                     controller: _phoneController,
-                    decoration: const InputDecoration(
-                      labelText: 'เบอร์โทร',
-                      border: OutlineInputBorder(),
+                    decoration: InputDecoration(
+                      labelText: L10n.phone,
+                      border: const OutlineInputBorder(),
                     ),
                     keyboardType: TextInputType.phone,
                     validator: (value) =>
-                        value?.trim().isEmpty == true ? 'กรุณากรอกเบอร์โทร' : null,
+                        value?.trim().isEmpty == true ? L10n.pleaseEnterPhone : null,
                   ),
                   if (user?.email?.trim().isNotEmpty == true) ...<Widget>[
                     const SizedBox(height: 12),
                     TextFormField(
                       initialValue: user!.email,
                       readOnly: true,
-                      decoration: const InputDecoration(
-                        labelText: 'อีเมล (อ่านอย่างเดียว)',
-                        border: OutlineInputBorder(),
+                      decoration: InputDecoration(
+                        labelText: L10n.emailReadOnly,
+                        border: const OutlineInputBorder(),
                       ),
                     ),
                   ],
                   const SizedBox(height: 20),
                   _sectionHeader(
-                    'รูปโปรไฟล์และข้อมูลรถ',
-                    subtitle: 'van2 ใช้แสดงในหน้าเดินทาง',
+                    L10n.profilePhotoVehicleSection,
+                    subtitle: L10n.profileVan2TravelHint,
                   ),
                   _imageTile(
-                    title: 'รูปโปรไฟล์ (ใบหน้าชัดเจน)',
+                    title: L10n.profilePhotoTitle,
                     file: _profilePhotoImage,
                     existingUrl: _existingProfilePhotoUrl,
                     onPick: () => _pickImage(
@@ -455,9 +489,9 @@ class _RiderProfileEditScreenState extends State<RiderProfileEditScreen> {
                           ),
                         )
                         .toList(),
-                    decoration: const InputDecoration(
-                      labelText: 'ประเภทรถ',
-                      border: OutlineInputBorder(),
+                    decoration: InputDecoration(
+                      labelText: L10n.vehicleType,
+                      border: const OutlineInputBorder(),
                     ),
                     onChanged: (value) => setState(() => _vehicleType = value),
                   ),
@@ -465,25 +499,25 @@ class _RiderProfileEditScreenState extends State<RiderProfileEditScreen> {
                   TextFormField(
                     controller: _licensePlateController,
                     textCapitalization: TextCapitalization.characters,
-                    decoration: const InputDecoration(
-                      labelText: 'ทะเบียนรถ',
-                      border: OutlineInputBorder(),
+                    decoration: InputDecoration(
+                      labelText: L10n.licensePlate,
+                      border: const OutlineInputBorder(),
                     ),
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
                     controller: _vehicleColorController,
-                    decoration: const InputDecoration(
-                      labelText: 'สีรถ (เช่น ขาว)',
-                      border: OutlineInputBorder(),
+                    decoration: InputDecoration(
+                      labelText: L10n.vehicleColorHint,
+                      border: const OutlineInputBorder(),
                     ),
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
                     controller: _vehicleBrandModelController,
-                    decoration: const InputDecoration(
-                      labelText: 'ยี่ห้อ/รุ่น (เช่น AION Y)',
-                      border: OutlineInputBorder(),
+                    decoration: InputDecoration(
+                      labelText: L10n.vehicleBrandHint,
+                      border: const OutlineInputBorder(),
                     ),
                   ),
                   SwitchListTile(
@@ -491,15 +525,15 @@ class _RiderProfileEditScreenState extends State<RiderProfileEditScreen> {
                     value: _isElectricVehicle,
                     onChanged: (value) =>
                         setState(() => _isElectricVehicle = value),
-                    title: const Text('รถไฟฟ้า (EV)'),
+                    title: Text(L10n.electricVehicle),
                   ),
                   const SizedBox(height: 20),
                   _sectionHeader(
-                    'เอกสารยืนยันตัวตน',
-                    subtitle: 'แก้ไขได้ทุกเมื่อ — แอดมินอาจตรวจสอบใหม่',
+                    L10n.identityDocumentsSection,
+                    subtitle: L10n.identityDocumentsEditableHint,
                   ),
                   _imageTile(
-                    title: 'ใบขับขี่',
+                    title: L10n.driverLicense,
                     file: _licenseImage,
                     existingUrl: _existingLicenseUrl,
                     onPick: () => _pickImage(
@@ -507,7 +541,7 @@ class _RiderProfileEditScreenState extends State<RiderProfileEditScreen> {
                     ),
                   ),
                   _imageTile(
-                    title: 'รูปรถ',
+                    title: L10n.vehiclePhoto,
                     file: _motorcycleImage,
                     existingUrl: _existingMotorcycleUrl,
                     onPick: () => _pickImage(
@@ -515,7 +549,7 @@ class _RiderProfileEditScreenState extends State<RiderProfileEditScreen> {
                     ),
                   ),
                   _imageTile(
-                    title: 'หน้าสมุดบัญชี',
+                    title: L10n.bankBookPage,
                     file: _bookBankImage,
                     existingUrl: _existingBookBankUrl,
                     onPick: () => _pickImage(
@@ -523,7 +557,7 @@ class _RiderProfileEditScreenState extends State<RiderProfileEditScreen> {
                     ),
                   ),
                   const SizedBox(height: 20),
-                  _sectionHeader('บัญชีรับเงิน'),
+                  _sectionHeader(L10n.payoutAccountSection),
                   DropdownButtonFormField<String>(
                     value: _selectedBank,
                     items: _bankOptions
@@ -534,35 +568,76 @@ class _RiderProfileEditScreenState extends State<RiderProfileEditScreen> {
                           ),
                         )
                         .toList(),
-                    decoration: const InputDecoration(
-                      labelText: 'ธนาคาร',
-                      border: OutlineInputBorder(),
+                    decoration: InputDecoration(
+                      labelText: L10n.bank,
+                      border: const OutlineInputBorder(),
                     ),
                     onChanged: (value) => setState(() => _selectedBank = value),
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
                     controller: _accountNumberController,
-                    decoration: const InputDecoration(
-                      labelText: 'เลขบัญชี',
-                      border: OutlineInputBorder(),
+                    decoration: InputDecoration(
+                      labelText: L10n.accountNumber,
+                      border: const OutlineInputBorder(),
                     ),
                     keyboardType: TextInputType.number,
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
                     controller: _accountOwnerController,
-                    decoration: const InputDecoration(
-                      labelText: 'ชื่อบัญชี (ต้องตรงธนาคาร)',
-                      border: OutlineInputBorder(),
+                    decoration: InputDecoration(
+                      labelText: L10n.accountName,
+                      border: const OutlineInputBorder(),
                     ),
+                  ),
+                  const SizedBox(height: 20),
+                  _sectionHeader(
+                    L10n.promptPayWithdrawRequired.replaceAll(' *', ''),
+                    subtitle: PromptPayQrPayload.payoutLinkedBankNotice,
+                  ),
+                  TextFormField(
+                    controller: _promptPayPhoneController,
+                    decoration: InputDecoration(
+                      labelText: L10n.promptPayPhoneRequired,
+                      hintText: L10n.promptPayPhoneHint,
+                      border: const OutlineInputBorder(),
+                    ),
+                    keyboardType: TextInputType.phone,
+                    validator: (value) {
+                      return PromptPayQrPayload.validatePayoutProfile(
+                        phone: value,
+                        nationalId: _promptPayNationalIdController.text,
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: _promptPayNationalIdController,
+                    decoration: InputDecoration(
+                      labelText: L10n.promptPayNationalIdOptional,
+                      hintText: L10n.promptPayNationalIdHint,
+                      border: const OutlineInputBorder(),
+                    ),
+                    keyboardType: TextInputType.number,
+                    onChanged: (_) => _formKey.currentState?.validate(),
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return null;
+                      }
+                      final digits = value.replaceAll(RegExp(r'\D'), '');
+                      if (digits.length != 13) {
+                        return L10n.promptPayNationalIdLengthError;
+                      }
+                      return null;
+                    },
                   ),
                   const SizedBox(height: 12),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     value: _pushOptIn,
                     onChanged: (value) => setState(() => _pushOptIn = value),
-                    title: const Text('รับแจ้งเตือนงาน'),
+                    title: Text(L10n.privacyJobNotificationsToggle),
                   ),
                   const SizedBox(height: 20),
                   FilledButton(
@@ -572,7 +647,7 @@ class _RiderProfileEditScreenState extends State<RiderProfileEditScreen> {
                       minimumSize: const Size.fromHeight(48),
                     ),
                     child: Text(
-                      _saving ? 'กำลังบันทึก...' : 'บันทึกโปรไฟล์',
+                      _saving ? L10n.saving : L10n.saveProfile,
                       style: const TextStyle(fontWeight: FontWeight.w800),
                     ),
                   ),

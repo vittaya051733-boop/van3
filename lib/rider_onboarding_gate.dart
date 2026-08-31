@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'l10n/l10n.dart';
 import 'rider_registration_screen.dart';
 import 'services/rider_auth_sign_out.dart';
 import 'services/rider_registration_service.dart';
@@ -48,8 +49,7 @@ class _RiderOnboardingGateState extends State<RiderOnboardingGate> {
       }
       setState(() {
         _loading = false;
-        _loadError =
-            'โหลดสถานะไรเดอร์ใช้เวลานานเกินไป กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตแล้วลองใหม่';
+        _loadError = L10n.riderStatusLoadTimeout;
       });
     });
   }
@@ -105,9 +105,9 @@ class _RiderOnboardingGateState extends State<RiderOnboardingGate> {
   String _formatLoadError(Object error) {
     if (error is FirebaseException) {
       if (error.code == 'permission-denied') {
-        return 'ไม่สามารถอ่านสถานะไรเดอร์ได้ (permission-denied) กรุณาติดต่อแอดมิน';
+        return L10n.riderStatusPermissionDenied;
       }
-      return 'โหลดสถานะไรเดอร์ไม่สำเร็จ (${error.code})';
+      return L10n.riderStatusLoadFailed(error.code);
     }
     return error.toString();
   }
@@ -152,10 +152,10 @@ class _RiderOnboardingGateState extends State<RiderOnboardingGate> {
               children: [
                 const Icon(Icons.cloud_off_outlined, size: 48),
                 const SizedBox(height: 16),
-                const Text(
-                  'โหลดสถานะไรเดอร์ไม่สำเร็จ',
+                Text(
+                  L10n.riderStatusLoadFailedTitle,
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontWeight: FontWeight.w700),
+                  style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 8),
                 Text(
@@ -171,12 +171,12 @@ class _RiderOnboardingGateState extends State<RiderOnboardingGate> {
                     });
                     _listenForAccessChanges();
                   },
-                  child: const Text('ลองอีกครั้ง'),
+                  child: Text(L10n.retry),
                 ),
                 const SizedBox(height: 8),
                 OutlinedButton(
                   onPressed: _signOut,
-                  child: const Text('ออกจากระบบ'),
+                  child: Text(L10n.signOut),
                 ),
               ],
             ),

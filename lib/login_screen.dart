@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'utils/guarded_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -11,6 +12,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'services/fcm_token_sync_service.dart';
 import 'services/notification_service.dart';
 import 'services/privacy_consent_service.dart';
+import 'l10n/l10n.dart';
 import 'utils/app_colors.dart';
 import 'utils/phone_login_helper.dart';
 
@@ -85,7 +87,7 @@ class _LoginScreenState extends State<LoginScreen> {
       'loginEmail': user.email,
       'displayName': (user.displayName?.trim().isNotEmpty ?? false)
           ? user.displayName!.trim()
-          : 'ไรเดอร์',
+          : L10n.adminSupportSourceRider,
       'role': 'rider',
       'userType': 'rider',
       'updatedAt': now,
@@ -105,12 +107,10 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<_RiderLoginLookup> _lookupRiderLogin(String normalizedPhone) async {
     try {
-      final callable = FirebaseFunctions.instanceFor(
-        region: 'asia-southeast1',
-      ).httpsCallable('resolveRiderLoginEmail');
-      final response = await callable.call(<String, dynamic>{
-        'phoneNumber': normalizedPhone,
-      });
+      final response = await GuardedFunctions.call(
+        'resolveRiderLoginEmail',
+        parameters: <String, dynamic>{'phoneNumber': normalizedPhone},
+      );
       final data = response.data;
       if (data is Map) {
         final loginEmail = data['loginEmail']?.toString().trim();
@@ -142,7 +142,7 @@ class _LoginScreenState extends State<LoginScreen> {
       password: password,
     );
     if (credential.user == null) {
-      throw Exception('ไม่พบข้อมูลผู้ใช้หลังเข้าสู่ระบบ');
+      throw Exception(L10n.userMissingAfterSignIn);
     }
     await _upsertRiderLoginUser(
       credential.user!,
@@ -166,7 +166,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final input = _emailController.text.trim();
     final password = _passwordController.text;
     if (input.isEmpty || password.isEmpty) {
-      _showSnack('กรอกข้อมูลให้ครบถ้วน');
+      _showSnack(L10n.fillAllFields);
       return;
     }
 
@@ -179,7 +179,7 @@ class _LoginScreenState extends State<LoginScreen> {
         if (lookup.useEmailLogin) {
           if (!mounted) return;
           setState(() => _isLoading = false);
-          _showSnack('บัญชีนี้ผูกกับอีเมล กรุณาเข้าสู่ระบบด้วยอีเมลแทนเบอร์โทร');
+          _showSnack(L10n.accountLinkedToEmail);
           return;
         }
         final loginCandidates = <String>{
@@ -208,30 +208,30 @@ class _LoginScreenState extends State<LoginScreen> {
         if (!mounted) return;
         setState(() => _isLoading = false);
         if (lastAuthError?.code == 'wrong-password') {
-          _showSnack('รหัสผ่านไม่ถูกต้อง');
+          _showSnack(L10n.wrongPassword);
           return;
         }
         if (lastAuthError?.code == 'user-disabled') {
-          _showSnack('บัญชีนี้ถูกปิดการใช้งาน');
+          _showSnack(L10n.accountDisabled);
           return;
         }
-        _showSnack('ไม่พบบัญชีที่ผูกกับเบอร์โทรนี้');
+        _showSnack(L10n.phoneAccountNotFound);
         return;
       } on FirebaseAuthException catch (e) {
         if (!mounted) return;
         setState(() => _isLoading = false);
-        String message = 'ไม่สามารถเข้าสู่ระบบได้';
+        String message = L10n.signInFailed;
         if (e.code == 'wrong-password') {
-          message = 'รหัสผ่านไม่ถูกต้อง';
+          message = L10n.wrongPassword;
         } else if (e.code == 'user-disabled') {
-          message = 'บัญชีนี้ถูกปิดการใช้งาน';
+          message = L10n.accountDisabled;
         }
         _showSnack(message);
         return;
       } catch (e) {
         if (!mounted) return;
         setState(() => _isLoading = false);
-        _showSnack('เกิดข้อผิดพลาดในการเข้าสู่ระบบด้วยเบอร์โทร: $e');
+        _showSnack(L10n.phoneSignInError(e));
         return;
       }
     }
@@ -243,7 +243,7 @@ class _LoginScreenState extends State<LoginScreen> {
         password: password,
       );
       if (userCredential.user == null) {
-        throw Exception('ไม่พบข้อมูลผู้ใช้หลังเข้าสู่ระบบ');
+        throw Exception(L10n.userMissingAfterSignIn);
       }
 
       await _upsertRiderLoginUser(userCredential.user!);
@@ -253,15 +253,15 @@ class _LoginScreenState extends State<LoginScreen> {
       await _finishLogin();
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
-      String message = 'ไม่สามารถเข้าสู่ระบบได้';
+      String message = L10n.signInFailed;
       if (e.code == 'user-not-found') {
-        message = 'ไม่พบผู้ใช้นี้ในระบบ กรุณาลงทะเบียนก่อน';
+        message = L10n.userNotFoundRegisterFirst;
       } else if (e.code == 'wrong-password') {
-        message = 'รหัสผ่านไม่ถูกต้อง';
+        message = L10n.wrongPassword;
       } else if (e.code == 'invalid-email') {
-        message = 'รูปแบบอีเมลไม่ถูกต้อง';
+        message = L10n.invalidEmailFormat;
       } else if (e.code == 'user-disabled') {
-        message = 'บัญชีนี้ถูกปิดการใช้งาน';
+        message = L10n.accountDisabled;
       }
       _showSnack(message);
       setState(() => _isLoading = false);
@@ -276,10 +276,10 @@ class _LoginScreenState extends State<LoginScreen> {
 
     try {
       if (Platform.isAndroid && _androidServerClientId.isEmpty) {
-        throw StateError('ยังไม่ได้ตั้งค่า GOOGLE_ANDROID_SERVER_CLIENT_ID');
+        throw StateError(L10n.googleAndroidClientIdNotSet);
       }
       if (Platform.isIOS && _iosClientId.isEmpty) {
-        throw StateError('ยังไม่ได้ตั้งค่า GOOGLE_IOS_CLIENT_ID');
+        throw StateError(L10n.googleIosClientIdNotSet);
       }
 
       final googleSignIn = GoogleSignIn.instance;
@@ -288,20 +288,20 @@ class _LoginScreenState extends State<LoginScreen> {
         clientId: Platform.isIOS ? _iosClientId : null,
       );
       if (!googleSignIn.supportsAuthenticate()) {
-        throw Exception('แพลตฟอร์มนี้ไม่รองรับ Google Sign-In');
+        throw Exception(L10n.googleSignInNotSupported);
       }
 
       final googleUser = await googleSignIn.authenticate();
       final googleAuth = googleUser.authentication;
       final idToken = googleAuth.idToken;
       if (idToken == null || idToken.isEmpty) {
-        throw FirebaseAuthException(code: 'missing-id-token', message: 'ไม่พบ Google ID token');
+        throw FirebaseAuthException(code: 'missing-id-token', message: L10n.googleIdTokenMissing);
       }
 
       final credential = GoogleAuthProvider.credential(idToken: idToken);
       final userCredential = await FirebaseAuth.instance.signInWithCredential(credential);
       if (userCredential.user == null) {
-        throw FirebaseAuthException(code: 'user-not-found', message: 'ไม่พบข้อมูลผู้ใช้หลังเข้าสู่ระบบ');
+        throw FirebaseAuthException(code: 'user-not-found', message: L10n.userMissingAfterSignIn);
       }
       await _upsertRiderLoginUser(userCredential.user!);
 
@@ -313,29 +313,29 @@ class _LoginScreenState extends State<LoginScreen> {
         if (kDebugMode) {
           debugPrint('Google sign-in failed: ${e.code} ${e.description ?? ''}');
         }
-        _showSnack('ไม่สามารถเข้าสู่ระบบด้วย Google ได้ (${e.code.name})');
+        _showSnack(L10n.googleSignInFailedWithCode(e.code.name));
       }
     } on StateError catch (e) {
       if (kDebugMode) {
         debugPrint('Google sign-in configuration error: ${e.message}');
       }
-      _showSnack('ตั้งค่า Google Sign-In ไม่ครบ: ${e.message}');
+      _showSnack(L10n.googleSignInConfigIncomplete(e.message));
     } on FirebaseAuthException catch (e) {
       if (kDebugMode) {
         debugPrint('Firebase Google sign-in failed: ${e.code} ${e.message ?? ''}');
       }
       final message = e.message ?? '';
       if (e.code == 'internal-error' && message.contains('blocked')) {
-        _showSnack('Firebase ยังบล็อก van3.rider.com — รอ SHA-1/App Check propagate หรือ rebuild แอpp');
+        _showSnack(L10n.firebaseBlockedVan3);
       } else {
-        _showSnack('ไม่สามารถเข้าสู่ระบบด้วย Google ได้ (${e.code})');
+        _showSnack(L10n.googleSignInFailedFirebaseCode(e.code));
       }
     } catch (error, stackTrace) {
       if (kDebugMode) {
         debugPrint('Unexpected Google sign-in error: $error');
         debugPrint('$stackTrace');
       }
-      _showSnack('ไม่สามารถเข้าสู่ระบบด้วย Google ได้');
+      _showSnack(L10n.googleSignInFailed);
     } finally {
       if (mounted) {
         setState(() {
@@ -401,7 +401,7 @@ class _LoginScreenState extends State<LoginScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text('เข้าสู่ระบบ'),
+        title: Text(L10n.signIn),
         backgroundColor: AppColors.accent,
         foregroundColor: Colors.white,
         elevation: 0,
@@ -418,8 +418,8 @@ class _LoginScreenState extends State<LoginScreen> {
               textInputAction: TextInputAction.next,
               autofillHints: const [AutofillHints.username, AutofillHints.email],
               decoration: InputDecoration(
-                labelText: 'อีเมลหรือเบอร์โทร',
-                hintText: 'user@example.com หรือ 0812345678',
+                labelText: L10n.emailOrPhone,
+                hintText: L10n.emailOrPhoneHint,
                 prefixIcon: const Icon(Icons.account_circle),
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                 filled: true,
@@ -434,7 +434,7 @@ class _LoginScreenState extends State<LoginScreen> {
               textInputAction: TextInputAction.done,
               autofillHints: const [AutofillHints.password],
               decoration: InputDecoration(
-                labelText: 'รหัสผ่าน',
+                labelText: L10n.password,
                 prefixIcon: const Icon(Icons.lock),
                 suffixIcon: IconButton(
                   icon: Icon(_isPasswordVisible ? Icons.visibility : Icons.visibility_off),
@@ -455,9 +455,9 @@ class _LoginScreenState extends State<LoginScreen> {
               alignment: Alignment.centerRight,
               child: TextButton(
                 onPressed: () => Navigator.of(context).pushNamed('/forgot'),
-                child: const Text(
-                  'ลืมรหัสผ่าน?',
-                  style: TextStyle(color: AppColors.accent, fontWeight: FontWeight.w500),
+                child: Text(
+                  L10n.forgotPasswordQuestion,
+                  style: const TextStyle(color: AppColors.accent, fontWeight: FontWeight.w500),
                 ),
               ),
             ),
@@ -476,7 +476,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       width: 20,
                       child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
                     )
-                  : const Text('เข้าสู่ระบบ', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  : Text(L10n.signIn, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             ),
             const SizedBox(height: 24),
             const _OrDivider(),
@@ -486,7 +486,7 @@ class _LoginScreenState extends State<LoginScreen> {
               child: _socialButton(
                 onPressed: _isSocialLoading ? null : _signInWithGoogle,
                 assetImage: 'assets/google_logo.png',
-                label: 'เข้าสู่ระบบด้วย Google',
+                label: L10n.signInWithGoogle,
                 backgroundColor: Colors.white,
                 foregroundColor: Colors.black87,
                 buttonKey: 'google',
@@ -496,9 +496,9 @@ class _LoginScreenState extends State<LoginScreen> {
             Center(
               child: GestureDetector(
                 onTap: () => Navigator.of(context).maybePop(),
-                child: const Text(
-                  '← ย้อนกลับ',
-                  style: TextStyle(color: AppColors.accent, fontSize: 16, fontWeight: FontWeight.w500),
+                child: Text(
+                  L10n.goBack,
+                  style: const TextStyle(color: AppColors.accent, fontSize: 16, fontWeight: FontWeight.w500),
                 ),
               ),
             ),
@@ -533,10 +533,10 @@ class _LoginHeader extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 32),
-        const Text(
-          'Van3 Rider',
+        Text(
+          L10n.appTitle,
           textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xFF2C3E50)),
+          style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xFF2C3E50)),
         ),
         const SizedBox(height: 32),
       ],
@@ -549,14 +549,14 @@ class _OrDivider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Row(
+    return Row(
       children: [
-        Expanded(child: Divider()),
+        const Expanded(child: Divider()),
         Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16),
-          child: Text('หรือ', style: TextStyle(color: Colors.grey)),
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Text(L10n.orDivider, style: const TextStyle(color: Colors.grey)),
         ),
-        Expanded(child: Divider()),
+        const Expanded(child: Divider()),
       ],
     );
   }

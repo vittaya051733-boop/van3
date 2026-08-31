@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'l10n/l10n.dart';
 import 'rider_chat_room_screen.dart';
 import 'services/chat_warmup_service.dart';
 import 'wallet_screen.dart';
@@ -23,6 +24,7 @@ import 'widgets/travel_order_avatar.dart';
 import 'utils/order_call_launcher.dart';
 import 'utils/order_payment_label.dart';
 import 'utils/order_pay_at_destination.dart';
+import 'utils/guarded_functions.dart';
 
 enum _InsufficientCreditAction { cancel, topUp, reject }
 
@@ -105,20 +107,22 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('ยืนยันหักเครดิต'),
+          title: Text(L10n.confirmCreditDeduct),
           content: Text(
-            'ออเดอร์นี้เป็น "$paymentLabel"\n'
-            'ระบบจะหักเครดิตของคุณ $holdAmount บาท เมื่อกดรับงาน\n\n'
-            'เครดิตปัจจุบัน: ${currentCredit.toStringAsFixed(2)} บาท',
+            L10n.confirmCreditDeductBody(
+              paymentLabel,
+              holdAmount,
+              currentCredit,
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('ยกเลิก'),
+              child: Text(L10n.cancel),
             ),
             FilledButton(
               onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('ยืนยันรับงาน'),
+              child: Text(L10n.confirmAcceptJob),
             ),
           ],
         );
@@ -139,31 +143,32 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('เครดิตไม่พอ'),
+          title: Text(L10n.insufficientCredit),
           content: Text(
-            'ออเดอร์นี้เป็น "$paymentLabel"\n'
-            'ต้องใช้เครดิตอย่างน้อย $holdAmount บาทเพื่อรับงาน\n\n'
-            'เครดิตปัจจุบัน: ${currentCredit.toStringAsFixed(2)} บาท\n\n'
-            'กรุณาเติมเครดิตกับไลด์เดอร์ก่อน หรือปฏิเสธงานนี้',
+            L10n.insufficientCreditBody(
+              paymentLabel,
+              holdAmount,
+              currentCredit,
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(
                 _InsufficientCreditAction.cancel,
               ),
-              child: const Text('ปิด'),
+              child: Text(L10n.close),
             ),
             OutlinedButton(
               onPressed: () => Navigator.of(dialogContext).pop(
                 _InsufficientCreditAction.reject,
               ),
-              child: const Text('ปฏิเสธงาน'),
+              child: Text(L10n.rejectJob),
             ),
             FilledButton(
               onPressed: () => Navigator.of(dialogContext).pop(
                 _InsufficientCreditAction.topUp,
               ),
-              child: const Text('เติมเครดิต'),
+              child: Text(L10n.topUpCredit),
             ),
           ],
         );
@@ -213,7 +218,9 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                           child: Padding(
                             padding: const EdgeInsets.all(16),
                             child: Text(
-                              'โหลดรายละเอียดออเดอร์ไม่สำเร็จ\n${snapshot.error}',
+                              L10n.loadOrderDetailsFailedWithError(
+                                snapshot.error!,
+                              ),
                               textAlign: TextAlign.center,
                             ),
                           ),
@@ -224,12 +231,17 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
           final viewData = snapshot.data ?? _IncomingOrderViewData.empty(widget.initialData);
           final products = viewData.products;
           final titleLabel = isTravelOrder
-              ? (viewData.pickupLabel.isNotEmpty ? viewData.pickupLabel : 'ไม่พบจุดรับ')
-              : (shopName?.isNotEmpty == true ? shopName! : 'ไม่พบชื่อร้าน');
-          final distanceLabel = isTravelOrder ? 'ระยะถึงจุดรับ' : 'ระยะถึงร้าน';
-          final destinationTitle = isTravelOrder ? 'จุดส่ง' : 'ปลายทาง';
-          final pickupMapLabel = isTravelOrder ? 'แผนที่จุดรับ' : 'แผนที่ร้านค้า';
-          final detailSectionTitle = isTravelOrder ? 'รายละเอียดการเดินทาง' : 'รายการสินค้า';
+              ? (viewData.pickupLabel.isNotEmpty
+                    ? viewData.pickupLabel
+                    : L10n.pickupNotFound)
+              : (shopName?.isNotEmpty == true ? shopName! : L10n.shopNameNotFound);
+          final distanceLabel =
+              isTravelOrder ? L10n.distanceToPickup : L10n.distanceToShop;
+          final pickupMapLabel =
+              isTravelOrder ? L10n.pickupMap : L10n.shopMap;
+          final detailSectionTitle = isTravelOrder
+              ? L10n.travelDetailsSection
+              : L10n.productListSection;
 
           return Column(
               children: <Widget>[
@@ -242,11 +254,11 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                   child: Text(
                     isTravelOrder
                         ? (orderCode?.isNotEmpty == true
-                              ? 'งานเดินทางใหม่ $orderCode'
-                              : 'งานเดินทางใหม่')
+                              ? L10n.newTravelJobWithCode(orderCode!)
+                              : L10n.newTravelJob)
                         : (orderCode?.isNotEmpty == true
-                              ? 'ออเดอร์ใหม่ $orderCode'
-                              : 'ออเดอร์ใหม่'),
+                              ? L10n.newOrderWithCode(orderCode!)
+                              : L10n.newOrder),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -287,13 +299,16 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                       const SizedBox(height: 6),
                                       Text(
                                         orderCode?.isNotEmpty == true
-                                            ? 'Order ID: ${widget.orderId}\nเลขออเดอร์: $orderCode'
-                                            : 'Order ID: ${widget.orderId}',
+                                            ? L10n.orderIdAndCode(
+                                                widget.orderId,
+                                                orderCode!,
+                                              )
+                                            : L10n.orderIdWithValue(widget.orderId),
                                         style: const TextStyle(color: Color(0xFF6B7280)),
                                       ),
                                       const SizedBox(height: 6),
                                       Text(
-                                        'วิธีจ่าย: ${paymentLabel ?? '-'}',
+                                        L10n.paymentMethodWithLabel(paymentLabel),
                                         style: const TextStyle(
                                           color: Color(0xFF6B7280),
                                           fontWeight: FontWeight.w600,
@@ -310,12 +325,12 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                               spacing: 10,
                               children: <Widget>[
                                 _InfoChip(
-                                  label: isTravelOrder ? 'ค่าโดยสาร' : 'ยอดรวม',
+                                  label: isTravelOrder ? L10n.fare : L10n.total,
                                   value: 'THB ${viewData.total.toStringAsFixed(1)}',
                                 ),
                                 if (!isTravelOrder)
                                   _InfoChip(
-                                    label: 'ค่าส่ง',
+                                    label: L10n.shippingFee,
                                     value: 'THB ${viewData.shippingFee.toStringAsFixed(1)}',
                                   ),
                                 _InfoChip(
@@ -329,7 +344,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                             const SizedBox(height: 12),
                             if (isTravelOrder) ...<Widget>[
                               Text(
-                                'จุดรับ: ${viewData.pickupLabel}',
+                                L10n.pickupPoint(viewData.pickupLabel),
                                 style: const TextStyle(
                                   fontSize: 15,
                                   fontWeight: FontWeight.w600,
@@ -337,7 +352,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                               ),
                               const SizedBox(height: 8),
                               Text(
-                                'จุดส่ง: ${viewData.destinationLabel}',
+                                L10n.dropoffPointWithLabel(viewData.destinationLabel),
                                 style: const TextStyle(
                                   fontSize: 15,
                                   fontWeight: FontWeight.w600,
@@ -346,7 +361,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                               if (viewData.vehicleTypeLabel != null) ...<Widget>[
                                 const SizedBox(height: 8),
                                 Text(
-                                  'ประเภทรถ: ${viewData.vehicleTypeLabel}',
+                                  L10n.vehicleTypeWithLabel(viewData.vehicleTypeLabel!),
                                   style: const TextStyle(
                                     fontSize: 15,
                                     fontWeight: FontWeight.w600,
@@ -356,7 +371,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                               if (viewData.scheduleLabel != null) ...<Widget>[
                                 const SizedBox(height: 8),
                                 Text(
-                                  'เวลาเดินทาง: ${viewData.scheduleLabel}',
+                                  L10n.scheduleWithLabel(viewData.scheduleLabel!),
                                   style: const TextStyle(
                                     fontSize: 15,
                                     fontWeight: FontWeight.w600,
@@ -365,7 +380,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                               ],
                             ] else ...<Widget>[
                               Text(
-                                '$destinationTitle: ${viewData.destinationLabel}',
+                                L10n.destinationWithLabel(viewData.destinationLabel),
                                 style: const TextStyle(
                                   fontSize: 15,
                                   fontWeight: FontWeight.w600,
@@ -387,7 +402,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                         );
                                       },
                                       icon: const Icon(Icons.map_outlined),
-                                      label: const Text('แผนที่ปลายทาง'),
+                                      label: Text(L10n.destinationMap),
                                     ),
                                   if (viewData.shopCoords != null)
                                     OutlinedButton.icon(
@@ -410,7 +425,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                       ),
                       const SizedBox(height: 10),
                       _SectionCard(
-                        title: 'ติดต่อ',
+                        title: L10n.contact,
                         child: isTravelOrder
                             ? Column(
                                 children: <Widget>[
@@ -437,7 +452,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                                   );
                                                 },
                                           icon: const Icon(Icons.phone_in_talk_outlined),
-                                          label: const Text('โทรลูกค้า'),
+                                          label: Text(L10n.callCustomer),
                                         ),
                                       ),
                                       const SizedBox(width: 10),
@@ -452,7 +467,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                                   );
                                                 },
                                           icon: const Icon(Icons.place_outlined),
-                                          label: const Text('แผนที่จุดรับ'),
+                                          label: Text(L10n.pickupMap),
                                         ),
                                       ),
                                     ],
@@ -477,14 +492,14 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                                     MaterialPageRoute<void>(
                                                       builder: (_) => RiderChatRoomScreen(
                                                         peerUid: viewData.customerUid!,
-                                                        peerLabel: 'ลูกค้า',
+                                                        peerLabel: L10n.customer,
                                                         orderId: widget.orderId,
                                                       ),
                                                     ),
                                                   );
                                                 },
                                           icon: const Icon(Icons.chat_bubble_outline_rounded),
-                                          label: const Text('แชตลูกค้า'),
+                                          label: Text(L10n.chatCustomer),
                                         ),
                                       ),
                                       const SizedBox(width: 10),
@@ -497,7 +512,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                                       .openCustomerMap(viewData.orderData);
                                                 },
                                           icon: const Icon(Icons.map_outlined),
-                                          label: const Text('แผนที่ปลายทาง'),
+                                          label: Text(L10n.destinationMap),
                                         ),
                                       ),
                                     ],
@@ -529,7 +544,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                                   );
                                                 },
                                           icon: const Icon(Icons.phone_in_talk_outlined),
-                                          label: const Text('โทรลูกค้า'),
+                                          label: Text(L10n.callCustomer),
                                         ),
                                       ),
                                       const SizedBox(width: 10),
@@ -554,7 +569,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                                   );
                                                 },
                                           icon: const Icon(Icons.support_agent_rounded),
-                                          label: const Text('โทรร้านค้า'),
+                                          label: Text(L10n.callShop),
                                         ),
                                       ),
                                     ],
@@ -579,14 +594,14 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                                     MaterialPageRoute<void>(
                                                       builder: (_) => RiderChatRoomScreen(
                                                         peerUid: viewData.customerUid!,
-                                                        peerLabel: 'ลูกค้า',
+                                                        peerLabel: L10n.customer,
                                                         orderId: widget.orderId,
                                                       ),
                                                     ),
                                                   );
                                                 },
                                           icon: const Icon(Icons.chat_bubble_outline_rounded),
-                                          label: const Text('แชตลูกค้า'),
+                                          label: Text(L10n.chatCustomer),
                                         ),
                                       ),
                                       const SizedBox(width: 10),
@@ -607,14 +622,14 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                                     MaterialPageRoute<void>(
                                                       builder: (_) => RiderChatRoomScreen(
                                                         peerUid: viewData.shopOwnerUid!,
-                                                        peerLabel: 'ร้านค้า',
+                                                        peerLabel: L10n.shop,
                                                         orderId: widget.orderId,
                                                       ),
                                                     ),
                                                   );
                                                 },
                                           icon: const Icon(Icons.storefront_outlined),
-                                          label: const Text('แชตร้านค้า'),
+                                          label: Text(L10n.chatShop),
                                         ),
                                       ),
                                     ],
@@ -629,10 +644,10 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                             ? _TravelOrderSummary(viewData: viewData)
                             : Column(
                                 children: products.isEmpty
-                                    ? const <Widget>[
+                                    ? <Widget>[
                                         Align(
                                           alignment: Alignment.centerLeft,
-                                          child: Text('ไม่พบรายละเอียดสินค้า'),
+                                          child: Text(L10n.noProductDetails),
                                         ),
                                       ]
                                     : products
@@ -660,7 +675,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                       Expanded(
                         child: OutlinedButton(
                           onPressed: _isSubmitting ? null : _rejectOrder,
-                          child: const Text('ไม่รับงาน'),
+                          child: Text(L10n.declineJob),
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -674,7 +689,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
                                   child: CircularProgressIndicator(strokeWidth: 2),
                                 )
                               : const Icon(Icons.check_circle_outline),
-                          label: Text(_isSubmitting ? 'กำลังบันทึก...' : 'รับงาน'),
+                          label: Text(_isSubmitting ? L10n.savingJob : L10n.acceptJob),
                         ),
                       ),
                     ],
@@ -756,7 +771,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
       if (currentUid == null || currentUid.isEmpty) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('กรุณาเข้าสู่ระบบใหม่')),
+          SnackBar(content: Text(L10n.signInRequiredAgain)),
         );
         return;
       }
@@ -768,7 +783,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
       final isPayAtDestination = isPayAtDestinationOrder(data);
       final paymentLabel =
           resolveOrderPaymentLabel(data) ??
-          (isPayAtDestination ? 'จ่ายปลายทาง' : '');
+          (isPayAtDestination ? L10n.paymentPayAtDestination : '');
 
       if (isPayAtDestination) {
         final holdAmount = resolvePayAtDestinationHoldAmount(data);
@@ -778,7 +793,9 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
             final action = await _showInsufficientCreditDialog(
               holdAmount: holdAmount,
               currentCredit: currentCredit,
-              paymentLabel: paymentLabel.isEmpty ? 'จ่ายปลายทาง' : paymentLabel,
+              paymentLabel: paymentLabel.isEmpty
+                  ? L10n.paymentPayAtDestination
+                  : paymentLabel,
             );
 
             if (action == _InsufficientCreditAction.topUp) {
@@ -800,7 +817,9 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
           final confirmed = await _confirmDeductCreditDialog(
             holdAmount: holdAmount,
             currentCredit: currentCredit,
-            paymentLabel: paymentLabel.isEmpty ? 'จ่ายปลายทาง' : paymentLabel,
+            paymentLabel: paymentLabel.isEmpty
+                ? L10n.paymentPayAtDestination
+                : paymentLabel,
           );
           if (!confirmed) {
             return;
@@ -811,11 +830,10 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
       if (!mounted) return;
       setState(() => _isSubmitting = true);
 
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-southeast1')
-          .httpsCallable('acceptRiderOrder');
-      await callable.call(<String, dynamic>{
-        'orderId': widget.orderId,
-      });
+      await GuardedFunctions.call(
+        'acceptRiderOrder',
+        parameters: <String, dynamic>{'orderId': widget.orderId},
+      );
 
       // Push พิกัดตอนรับงาน (action)
       unawaited(RiderLocationPusher.pushOnce(
@@ -826,27 +844,27 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
       if (!mounted) return;
       Navigator.of(context).pop(true);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('รับงานเรียบร้อย')),
+        SnackBar(content: Text(L10n.jobAccepted)),
       );
 
       unawaited(_sendOrderAppNotification(
         targetApp: 'van1',
         recipientUid: _readTrimmedString(data['shopOwnerId']),
         orderId: widget.orderId,
-        title: 'ไรเดอร์รับงานแล้ว',
-        body: 'ออเดอร์${_orderCodeSuffix(data)} มีไรเดอร์รับงานแล้ว',
+        title: L10n.riderAcceptedJobTitle,
+        body: L10n.riderAcceptedJobBody(_orderCodeSuffix(data)),
         action: 'order_accepted',
       ));
       return;
     } on FirebaseFunctionsException catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.message ?? 'รับงานไม่สำเร็จ')),
+        SnackBar(content: Text(error.message ?? L10n.acceptJobFailed)),
       );
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('รับงานไม่สำเร็จ: $error')),
+        SnackBar(content: Text(L10n.acceptJobFailedWithError(error))),
       );
     } finally {
       if (mounted) {
@@ -875,16 +893,15 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
         if (!mounted) return;
         Navigator.of(context).pop(false);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('ออเดอร์นี้ถูกรับโดยไรเดอร์คนอื่นแล้ว')),
+          SnackBar(content: Text(L10n.orderTakenByOtherRider)),
         );
         return;
       }
 
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-southeast1')
-          .httpsCallable('rejectRiderOrder');
-      await callable.call(<String, dynamic>{
-        'orderId': widget.orderId,
-      });
+      await GuardedFunctions.call(
+        'rejectRiderOrder',
+        parameters: <String, dynamic>{'orderId': widget.orderId},
+      );
 
       if (!mounted) return;
       Navigator.of(context).pop(false);
@@ -893,8 +910,8 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
         targetApp: 'van2',
         recipientUid: _readTrimmedString(data['customerId']),
         orderId: widget.orderId,
-        title: 'กำลังหาไรเดอร์ใหม่',
-        body: 'ไรเดอร์ปฏิเสธงาน ระบบกำลังค้นหาไรเดอร์ให้ใหม่',
+        title: L10n.findingNewRiderTitle,
+        body: L10n.findingNewRiderBody,
         action: 'order_rejected',
       ));
 
@@ -902,8 +919,8 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
         targetApp: 'van1',
         recipientUid: _readTrimmedString(data['shopOwnerId']),
         orderId: widget.orderId,
-        title: 'ไรเดอร์ปฏิเสธงาน',
-        body: 'ออเดอร์${_orderCodeSuffix(data)} ไรเดอร์ปฏิเสธงาน ระบบกำลังหาไรเดอร์ใหม่',
+        title: L10n.riderDeclinedJobTitle,
+        body: L10n.riderDeclinedJobBody(_orderCodeSuffix(data)),
         action: 'order_rejected',
       ));
 
@@ -912,20 +929,20 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
         SnackBar(
           content: Text(
             status == 'accepted'
-                ? 'ยกเลิกการรับงานแล้ว ระบบจะหาคนขับคนอื่นต่อ'
-                : 'ไม่รับงานแล้ว ระบบจะหาคนขับคนอื่นต่อ',
+                ? L10n.cancelAcceptFindingOther
+                : L10n.declinedFindingOther,
           ),
         ),
       );
     } on FirebaseFunctionsException catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.message ?? 'อัปเดตสถานะไม่สำเร็จ')),
+        SnackBar(content: Text(error.message ?? L10n.updateStatusFailed)),
       );
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('อัปเดตสถานะไม่สำเร็จ: $error')),
+        SnackBar(content: Text(L10n.updateStatusFailedWithError(error))),
       );
     } finally {
       if (mounted) {
@@ -978,7 +995,7 @@ class _IncomingOrderScreenState extends State<IncomingOrderScreen> {
     final ok = await launchUrl(searchUri, mode: LaunchMode.externalApplication);
     if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('ไม่สามารถเปิดแผนที่ได้')),
+        SnackBar(content: Text(L10n.cannotOpenMap)),
       );
     }
   }
@@ -1642,7 +1659,7 @@ class _TravelOrderSummary extends StatelessWidget {
         if (distanceKm != null && distanceKm > 0) ...<Widget>[
           const SizedBox(height: 10),
           Text(
-            'ระยะทางโดยประมาณ: ${distanceKm.toStringAsFixed(2)} km',
+            L10n.estimatedDistanceKm(distanceKm),
             style: const TextStyle(fontWeight: FontWeight.w600),
           ),
         ],
@@ -1655,7 +1672,7 @@ class _TravelOrderSummary extends StatelessWidget {
         ],
         const SizedBox(height: 10),
         Text(
-          'ค่าโดยสาร: THB ${viewData.total.toStringAsFixed(1)}',
+          L10n.fareThb(viewData.total),
           style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
         ),
       ],
@@ -1766,12 +1783,12 @@ class _ProductTile extends StatelessWidget {
                   style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 4),
-                Text('จำนวน ${product.quantity} ชิ้น'),
-                Text('ราคา THB ${product.unitPrice.toStringAsFixed(1)}'),
+                Text(L10n.quantityPieces(product.quantity)),
+                Text(L10n.priceThb(product.unitPrice)),
                 if (product.note.isNotEmpty) ...<Widget>[
                   const SizedBox(height: 4),
                   Text(
-                    'หมายเหตุ: ${product.note}',
+                    L10n.noteWithText(product.note),
                     style: const TextStyle(color: Color(0xFF6B7280)),
                   ),
                 ],

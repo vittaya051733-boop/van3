@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../l10n/l10n.dart';
 import '../privacy_onboarding_screen.dart';
 
 /// Keep in sync across van1, van2, van3.
@@ -247,12 +248,12 @@ class PrivacyConsentService {
     });
     final data = response.data;
     if (data is! Map) {
-      throw StateError('คำขอ PDPA ไม่สำเร็จ');
+      throw StateError(L10n.pdpaRequestFailed);
     }
     final requestId = data['requestId']?.toString().trim() ?? '';
     final ticketId = data['ticketId']?.toString().trim() ?? '';
     if (requestId.isEmpty) {
-      throw StateError('คำขอ PDPA ไม่สำเร็จ');
+      throw StateError(L10n.pdpaRequestFailed);
     }
     return (requestId: requestId, ticketId: ticketId);
   }

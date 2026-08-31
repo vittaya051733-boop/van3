@@ -4,6 +4,7 @@ import 'dart:math';
 import 'dart:ui' as ui;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'utils/guarded_functions.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -19,6 +20,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import 'services/promptpay_qr_payload.dart';
+import 'l10n/l10n.dart';
 
 class WalletTopUpDialog extends StatefulWidget {
   const WalletTopUpDialog({super.key});
@@ -148,12 +150,12 @@ class _WalletTopUpDialogState extends State<WalletTopUpDialog> {
 
   Future<void> _saveQrToGallery() async {
     if (kIsWeb) {
-      _showSnack('บันทึก QR บน Web ยังไม่รองรับ');
+      _showSnack(L10n.saveQrWebUnsupported);
       return;
     }
 
     if (!_canGeneratePromptPayQr) {
-      _showSnack('ยังไม่มี QR สำหรับบันทึก');
+      _showSnack(L10n.noQrToSave);
       return;
     }
 
@@ -166,12 +168,12 @@ class _WalletTopUpDialogState extends State<WalletTopUpDialog> {
         if (!permission.isGranted) {
           final storagePermission = await Permission.storage.request();
           if (!storagePermission.isGranted) {
-            _showSnack('ไม่ได้รับสิทธิ์เข้าถึงรูปภาพ/พื้นที่จัดเก็บ');
+            _showSnack(L10n.galleryPermissionDenied);
             return;
           }
         }
       } catch (_) {
-        _showSnack('ไม่สามารถขอสิทธิ์เข้าถึงรูปภาพได้');
+        _showSnack(L10n.galleryPermissionRequestFailed);
         return;
       }
 
@@ -181,13 +183,13 @@ class _WalletTopUpDialogState extends State<WalletTopUpDialog> {
 
       final boundary = _qrBoundaryKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
       if (boundary == null) {
-        _showSnack('บันทึก QR ไม่สำเร็จ');
+        _showSnack(L10n.saveQrFailed);
         return;
       }
       final ui.Image image = await boundary.toImage(pixelRatio: pixelRatio);
       final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
       if (byteData == null) {
-        _showSnack('บันทึก QR ไม่สำเร็จ');
+        _showSnack(L10n.saveQrFailed);
         return;
       }
 
@@ -199,9 +201,9 @@ class _WalletTopUpDialogState extends State<WalletTopUpDialog> {
       );
 
       final success = result['isSuccess'] == true;
-      _showSnack(success ? 'บันทึก QR ลงเครื่องเรียบร้อย' : 'บันทึก QR ไม่สำเร็จ');
+      _showSnack(success ? L10n.saveQrSuccess : L10n.saveQrFailed);
     } catch (error) {
-      _showSnack('บันทึก QR ไม่สำเร็จ: $error');
+      _showSnack(L10n.saveQrFailedWithError(error));
     } finally {
       if (mounted) {
         setState(() => _isBusy = false);
@@ -211,12 +213,12 @@ class _WalletTopUpDialogState extends State<WalletTopUpDialog> {
 
   Future<void> _pickSlipImage() async {
     if (kIsWeb) {
-      _showSnack('แนบสลิปบน Web ยังไม่รองรับ');
+      _showSnack(L10n.attachSlipWebUnsupported);
       return;
     }
 
     if (!_canGeneratePromptPayQr) {
-      _showSnack('กรุณาเลือกจำนวนเงินก่อน');
+      _showSnack(L10n.selectAmountBeforeSlip);
       return;
     }
 
@@ -229,35 +231,35 @@ class _WalletTopUpDialogState extends State<WalletTopUpDialog> {
 
       setState(() => _selectedSlipImage = image);
     } catch (error) {
-      _showSnack('เลือกสลิปไม่สำเร็จ: $error');
+      _showSnack(L10n.selectSlipFailed(error));
     }
   }
 
   Future<void> _verifySelectedSlip() async {
     if (kIsWeb) {
-      _showSnack('แนบสลิปบน Web ยังไม่รองรับ');
+      _showSnack(L10n.attachSlipWebUnsupported);
       return;
     }
 
     final image = _selectedSlipImage;
     if (image == null) {
-      _showSnack('กรุณาเลือกรูปสลิปก่อน');
+      _showSnack(L10n.selectSlipImageFirst);
       return;
     }
 
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      _showSnack('กรุณาเข้าสู่ระบบก่อน');
+      _showSnack(L10n.signInRequiredFirst);
       return;
     }
 
     final amount = _amount;
     if (amount == null || amount <= 0) {
-      _showSnack('กรุณาเลือกจำนวนเงินก่อน');
+      _showSnack(L10n.selectAmountBeforeSlip);
       return;
     }
     if (amount > _maxTopUpAmount) {
-      _showSnack('ยอดเติมสูงสุด ${_maxTopUpAmount.toStringAsFixed(0)} บาทต่อครั้ง');
+      _showSnack(L10n.topUpMaxExceeded(_maxTopUpAmount));
       return;
     }
 
@@ -315,20 +317,20 @@ class _WalletTopUpDialogState extends State<WalletTopUpDialog> {
         },
       );
 
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-southeast1')
-          .httpsCallable('verifyTopUpSlip');
-
-      final response = await callable.call(<String, dynamic>{
-        'uid': user.uid,
-        'expectedAmount': amount,
-        'expectedPromptPayId': _promptPayNationalId,
-        'storagePath': objectPath,
-        'bucket': Firebase.app().options.storageBucket,
-        'paymentGroupId': paymentGroupId,
-        'fileName': fileName,
-        'contentType': contentType,
-        'sourceApp': 'van3_rider',
-      });
+      final response = await GuardedFunctions.call(
+        'verifyTopUpSlip',
+        parameters: <String, dynamic>{
+          'uid': user.uid,
+          'expectedAmount': amount,
+          'expectedPromptPayId': _promptPayNationalId,
+          'storagePath': objectPath,
+          'bucket': Firebase.app().options.storageBucket,
+          'paymentGroupId': paymentGroupId,
+          'fileName': fileName,
+          'contentType': contentType,
+          'sourceApp': 'van3_rider',
+        },
+      );
 
       final data = (response.data is Map)
           ? Map<String, dynamic>.from(response.data as Map)
@@ -368,19 +370,19 @@ class _WalletTopUpDialogState extends State<WalletTopUpDialog> {
       if (success) {
         final details = <String>[];
         if (verifiedAmount != null) {
-          details.add('เติมเครดิต ${verifiedAmount.toStringAsFixed(2)} บาท');
+          details.add(L10n.topUpVerifiedAmount(verifiedAmount));
         }
         if (remainingAmount != null && remainingAmount > 0) {
-          details.add('คงเหลือต้องจ่ายอีก ${remainingAmount.toStringAsFixed(2)} บาท');
+          details.add(L10n.remainingToPay(remainingAmount));
         }
         if (overpaidAmount != null && overpaidAmount > 0) {
-          details.add('จ่ายเกิน ${overpaidAmount.toStringAsFixed(2)} บาท (ระบบเติมตามยอดที่จ่าย)');
+          details.add(L10n.overpaidTopUp(overpaidAmount));
         }
 
         final shouldContinueForRemaining = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-            title: const Text('ผลตรวจสลิป'),
+            title: Text(L10n.slipReviewResult),
             content: Text(
               [
                 if (message != null && message.isNotEmpty) message,
@@ -390,17 +392,17 @@ class _WalletTopUpDialogState extends State<WalletTopUpDialog> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('ปิด'),
+                child: Text(L10n.close),
               ),
               if (remainingAmount != null && remainingAmount > 0)
                 FilledButton(
                   onPressed: () => Navigator.of(context).pop(true),
-                  child: const Text('สร้าง QR ยอดคงเหลือ'),
+                  child: Text(L10n.createRemainingQr),
                 )
               else
                 FilledButton(
                   onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('ตกลง'),
+                  child: Text(L10n.ok),
                 ),
             ],
           ),
@@ -415,7 +417,7 @@ class _WalletTopUpDialogState extends State<WalletTopUpDialog> {
             _selectedAmount = remainingAmount;
             _customAmountController.text = remainingAmount.toStringAsFixed(2);
           });
-          _showSnack('สร้าง QR สำหรับยอดคงเหลือเรียบร้อย');
+          _showSnack(L10n.remainingQrCreated);
           return;
         }
 
@@ -424,21 +426,21 @@ class _WalletTopUpDialogState extends State<WalletTopUpDialog> {
         await showDialog<void>(
           context: context,
           builder: (context) => AlertDialog(
-            title: const Text('ผลตรวจสลิป'),
-            content: Text(message?.isNotEmpty == true ? message! : 'ตรวจสลิปไม่สำเร็จ'),
+            title: Text(L10n.slipReviewResult),
+            content: Text(message?.isNotEmpty == true ? message! : L10n.slipVerifyFailed),
             actions: [
               FilledButton(
                 onPressed: () => Navigator.of(context).pop(),
-                child: const Text('ตกลง'),
+                child: Text(L10n.ok),
               ),
             ],
           ),
         );
       }
     } on FirebaseFunctionsException catch (error) {
-      _showSnack(error.message ?? 'ตรวจสลิปไม่สำเร็จ');
+      _showSnack(error.message ?? L10n.slipVerifyFailed);
     } catch (error) {
-      _showSnack('ตรวจสลิปไม่สำเร็จ: $error');
+      _showSnack(L10n.slipVerifyFailedWithError(error));
     } finally {
       if (mounted) {
         setState(() => _isBusy = false);
@@ -558,15 +560,17 @@ class _WalletTopUpDialogState extends State<WalletTopUpDialog> {
             children: [
               const Icon(Icons.receipt_long_outlined, size: 20),
               const SizedBox(width: 8),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'แนบสลิป',
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  L10n.attachSlip,
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
               IconButton(
-                tooltip: selectedSlipImage == null ? 'เลือกจากแกลเลอรี' : 'เปลี่ยนรูปสลิป',
+                tooltip: selectedSlipImage == null
+                    ? L10n.pickSlipFromGallery
+                    : L10n.changeSlipImage,
                 visualDensity: VisualDensity.compact,
                 onPressed: enabled ? () => unawaited(_pickSlipImage()) : null,
                 icon: const Icon(Icons.photo_library_outlined),
@@ -597,9 +601,9 @@ class _WalletTopUpDialogState extends State<WalletTopUpDialog> {
                         width: 16,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const FittedBox(
+                    : FittedBox(
                         fit: BoxFit.scaleDown,
-                        child: Text('ส่งสลิปเพื่อตรวจสอบ'),
+                        child: Text(L10n.submitSlipForReview),
                       ),
               ),
             ),
@@ -616,15 +620,13 @@ class _WalletTopUpDialogState extends State<WalletTopUpDialog> {
     final nationalId = _promptPayNationalId;
     final recipientName = _recipientDisplayName ?? 'วิทยา ทนหงษา';
     final maskedPromptPay = nationalId == null
-        ? 'PromptPay'
+        ? L10n.promptPayDisplay
         : PromptPayQrPayload.maskedDisplayLabel(nationalId);
-
-    final amountLabel = (amount ?? 0).toStringAsFixed(2);
 
     return AlertDialog(
       backgroundColor: Colors.white,
       surfaceTintColor: Colors.white,
-      title: const Text('เติมเครดิต'),
+      title: Text(L10n.topUpTitle),
       content: SizedBox(
         width: 420,
         child: _loadingConfig
@@ -641,9 +643,9 @@ class _WalletTopUpDialogState extends State<WalletTopUpDialog> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('เลือกจำนวนเงิน'),
+                      Text(L10n.selectAmount),
                       Text(
-                        'สูงสุด ${_maxTopUpAmount.toStringAsFixed(0)} บาทต่อครั้ง · ส่งสลิปได้ไม่เกิน 3 ครั้งต่อวัน',
+                        L10n.topUpMaxPerTime(_maxTopUpAmount),
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                       const SizedBox(height: 10),
@@ -665,15 +667,15 @@ class _WalletTopUpDialogState extends State<WalletTopUpDialog> {
                         keyboardType: const TextInputType.numberWithOptions(decimal: true),
                         enabled: !_isBusy,
                         decoration: InputDecoration(
-                          labelText: 'กำหนดเอง',
-                          hintText: 'เช่น 1500 (สูงสุด ${_maxTopUpAmount.toStringAsFixed(0)})',
+                          labelText: L10n.customAmount,
+                          hintText: L10n.customAmountHint(_maxTopUpAmount),
                           border: const OutlineInputBorder(),
                         ),
                         onChanged: _onCustomAmountChanged,
                       ),
                       const SizedBox(height: 14),
                       if (!canGenerateQr)
-                        const Text('กรุณาเลือกจำนวนเงินเพื่อสร้าง QR')
+                        Text(L10n.selectAmountForQr)
                       else
                         Column(
                           mainAxisSize: MainAxisSize.min,
@@ -722,8 +724,8 @@ class _WalletTopUpDialogState extends State<WalletTopUpDialog> {
                                                 final data = _buildPromptPayPayload(amount!);
 
                                                 if (data == null || data.isEmpty) {
-                                                  return const Center(
-                                                    child: Text('PromptPay ID ไม่ถูกต้อง'),
+                                                  return Center(
+                                                    child: Text(L10n.invalidPromptPayId),
                                                   );
                                                 }
 
@@ -751,7 +753,7 @@ class _WalletTopUpDialogState extends State<WalletTopUpDialog> {
                                       ),
                                       const SizedBox(height: 10),
                                       Text(
-                                        'โอนให้ $recipientName',
+                                        L10n.transferToRecipient(recipientName),
                                         style: const TextStyle(
                                           fontSize: 12,
                                           fontWeight: FontWeight.w600,
@@ -771,7 +773,9 @@ class _WalletTopUpDialogState extends State<WalletTopUpDialog> {
                                       ),
                                       const SizedBox(height: 4),
                                       Text(
-                                        'Amount $amountLabel Baht',
+                                        amount == null
+                                            ? ''
+                                            : L10n.amountBaht(amount),
                                         style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
                                         textAlign: TextAlign.center,
                                         overflow: TextOverflow.ellipsis,
@@ -794,7 +798,7 @@ class _WalletTopUpDialogState extends State<WalletTopUpDialog> {
       actions: [
         TextButton(
           onPressed: _isBusy ? null : () => Navigator.of(context).pop(false),
-          child: const Text('ปิด'),
+          child: Text(L10n.close),
         ),
         FilledButton(
           onPressed: (_isBusy || !canGenerateQr) ? null : _saveQrToGallery,
@@ -804,9 +808,9 @@ class _WalletTopUpDialogState extends State<WalletTopUpDialog> {
                   width: 16,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const FittedBox(
+              : FittedBox(
                   fit: BoxFit.scaleDown,
-                  child: Text('บันทึก QR ลงเครื่อง'),
+                  child: Text(L10n.saveQrToDevice),
                 ),
         ),
       ],

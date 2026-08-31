@@ -8,6 +8,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'l10n/l10n.dart';
 import 'services/rider_app_image_prefetch.dart';
 import 'services/rider_order_actions.dart';
 import 'services/rider_orders_service.dart';
@@ -88,11 +89,9 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
   String _formatLoadError(Object? error) {
     final message = error?.toString() ?? 'unknown error';
     if (message.contains('permission-denied')) {
-      return 'โหลดงานไม่สำเร็จ: ไม่มีสิทธิ์อ่านออเดอร์จาก Firebase\n'
-          '(permission-denied)\n\n'
-          'ให้ deploy Firestore rules จาก van2 แล้วลองใหม่';
+      return L10n.loadJobsFailedPermission;
     }
-    return 'โหลดงานไม่สำเร็จ: $message';
+    return L10n.loadJobsFailedWithError(message);
   }
 
   Future<void> _persistExpandedHistoryDayKeys() async {
@@ -116,12 +115,12 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      return const Scaffold(body: Center(child: Text('กรุณาเข้าสู่ระบบใหม่')));
+      return Scaffold(body: Center(child: Text(L10n.signInRequiredAgain)));
     }
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.showHistory ? 'ประวัติ ออเดอร์' : 'รับงานใหม่'),
+        title: Text(widget.showHistory ? L10n.orderHistoryTitle : L10n.newJobsTitle),
       ),
       body: RefreshIndicator(
         onRefresh: RiderOrdersService.instance.refresh,
@@ -153,7 +152,7 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                 Center(
                   child: FilledButton(
                     onPressed: () => RiderOrdersService.instance.refresh(),
-                    child: const Text('ลองโหลดใหม่'),
+                    child: Text(L10n.reloadAgain),
                   ),
                 ),
               ],
@@ -188,8 +187,8 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                 Center(
                   child: Text(
                     widget.showHistory
-                        ? 'ยังไม่มีประวัติออเดอร์ที่ส่งสำเร็จ'
-                        : 'ยังไม่มีงานที่รับแล้วในตอนนี้',
+                        ? L10n.noDeliveredHistory
+                        : L10n.noAcceptedJobsNow,
                   ),
                 ),
               ],
@@ -408,8 +407,8 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                             Expanded(
                               child: Text(
                                 orderCode?.isNotEmpty == true
-                                    ? 'Order $orderCode'
-                                    : 'Order ${doc.id}',
+                                    ? L10n.orderLabelWithCode(orderCode!)
+                                    : L10n.orderLabel(doc.id),
                                 style: const TextStyle(
                                   fontWeight: FontWeight.w800,
                                   fontSize: 16,
@@ -432,7 +431,7 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                                         ),
                                       );
                                     },
-                                    tooltip: 'สแกนคิวอาร์',
+                                    tooltip: L10n.scanQr,
                                     icon: const Icon(
                                       Icons.qr_code_scanner_rounded,
                                     ),
@@ -446,7 +445,7 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                                         orderData: data,
                                       );
                                     },
-                                    tooltip: 'ถ่ายรูปยืนยันส่งถึงมือลูกค้า',
+                                    tooltip: L10n.captureDeliveryProof,
                                     icon: const Icon(Icons.camera_alt_rounded),
                                   ),
                                 ],
@@ -465,43 +464,51 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                         const SizedBox(height: 2),
                         Text(
                           isTravelOrder
-                              ? 'จุดรับ: ${_readTravelPickupLabel(data)}'
-                              : 'ร้าน: ${shopName?.isNotEmpty == true ? shopName : '-'}',
+                              ? L10n.pickupLabel(_readTravelPickupLabel(data))
+                              : L10n.shopLabel(
+                                  shopName?.isNotEmpty == true ? shopName! : '-',
+                                ),
                         ),
                         if (isTravelOrder) ...[
                           Text(
-                            'จุดส่ง: ${_readTravelDestinationLabel(data)}',
+                            L10n.dropoffPointWithLabel(
+                              _readTravelDestinationLabel(data),
+                            ),
                           ),
                           if (_readTravelVehicleLabel(data) != null)
-                            Text('ประเภทรถ: ${_readTravelVehicleLabel(data)}'),
+                            Text(
+                              L10n.vehicleTypeWithLabel(
+                                _readTravelVehicleLabel(data)!,
+                              ),
+                            ),
                         ],
-                        Text('สถานะ: $status'),
-                        Text('วิธีจ่าย: ${paymentLabel ?? '-'}'),
-                        Text('ค่าส่ง: THB ${shippingFee.toStringAsFixed(1)}'),
+                        Text(L10n.orderStatus(status)),
+                        Text(L10n.paymentMethodWithLabel(paymentLabel)),
+                        Text(L10n.shippingFeeThb(shippingFee)),
                         if (showHistory && isPayAtDestination) ...[
                           Text(
-                            'เก็บเงินสด: THB ${collectedAmount.toStringAsFixed(1)}',
+                            L10n.cashCollectedLabel(collectedAmount),
                           ),
                           Text(
-                            'รายได้ค่าส่งสุทธิ: THB ${riderNetIncome.toStringAsFixed(1)}',
+                            L10n.riderNetIncomeLabel(riderNetIncome),
                           ),
-                          Text('ส่งสำเร็จเมื่อ: ${deliveredAtText ?? '-'}'),
+                          Text(L10n.deliveredAtValue(deliveredAtText)),
                         ] else if (showHistory) ...[
                           Text(
-                            'รายได้สุทธิไรเดอร์: THB ${riderNetIncome.toStringAsFixed(1)}',
+                            L10n.riderNetIncomeLabel(riderNetIncome),
                           ),
-                          Text('ส่งสำเร็จเมื่อ: ${deliveredAtText ?? '-'}'),
+                          Text(L10n.deliveredAtValue(deliveredAtText)),
                         ],
                         Padding(
                           padding: const EdgeInsets.only(top: 2),
                           child: Text(
                             distanceKm == null
-                                ? (isTravelOrder
-                                      ? 'ระยะทางไรเดอร์ถึงจุดรับ: -'
-                                      : 'ระยะทางไรเดอร์ถึงร้าน: -')
-                                : (isTravelOrder
-                                      ? 'ระยะทางไรเดอร์ถึงจุดรับ: ${distanceKm.toStringAsFixed(2)} km'
-                                      : 'ระยะทางไรเดอร์ถึงร้าน: ${distanceKm.toStringAsFixed(2)} km'),
+                                  ? (isTravelOrder
+                                      ? L10n.distanceToPickupDash
+                                      : L10n.distanceToShopDash)
+                                  : (isTravelOrder
+                                      ? L10n.distanceToPickupKm(distanceKm!)
+                                      : L10n.distanceToShopKm(distanceKm!)),
                             style: const TextStyle(
                               color: Color(0xFF6B7280),
                               fontSize: 12,
@@ -515,23 +522,23 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
               ),
               const SizedBox(height: 8),
               if (isTravelOrder) ...[
-                const Text(
-                  'รายละเอียดการเดินทาง',
-                  style: TextStyle(fontWeight: FontWeight.w700),
+                Text(
+                  L10n.travelDetailsSection,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   products.isNotEmpty
                       ? (products.first['note'] ??
                               products.first['name'] ??
-                              'บริการรับส่งผู้โดยสาร')
+                              L10n.passengerService)
                           .toString()
-                      : 'บริการรับส่งผู้โดยสาร',
+                      : L10n.passengerService,
                 ),
               ] else ...[
-                const Text(
-                  'รายการสินค้า',
-                  style: TextStyle(fontWeight: FontWeight.w700),
+                Text(
+                  L10n.productListSection,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 4),
                 for (final item in products)
@@ -574,14 +581,14 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                                 },
                                 style: _orderActionButtonStyle(),
                                 icon: const Icon(Icons.place_outlined),
-                                label: const Text('แผนที่จุดรับ'),
+                                label: Text(L10n.pickupMap),
                               )
                             else
                               OutlinedButton.icon(
                                 onPressed: null,
                                 style: _orderActionButtonStyle(),
                                 icon: const Icon(Icons.place_outlined),
-                                label: const Text('แผนที่จุดรับ'),
+                                label: Text(L10n.pickupMap),
                               ),
                             const SizedBox(height: 8),
                             OutlinedButton.icon(
@@ -606,13 +613,13 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                                     },
                               style: _orderActionButtonStyle(),
                               icon: const Icon(Icons.phone),
-                              label: const Text('โทรลูกค้า'),
+                              label: Text(L10n.callCustomer),
                             ),
                             const SizedBox(height: 8),
                             _PeerChatButton(
                               peerUid: customerUid,
-                              peerLabel: 'ลูกค้า',
-                              label: 'แชตลูกค้า',
+                              peerLabel: L10n.customer,
+                              label: L10n.chatCustomer,
                               icon: Icons.chat_bubble_outline_rounded,
                               onPressed:
                                   customerUid == null || customerUid.isEmpty
@@ -622,7 +629,7 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                                         MaterialPageRoute<void>(
                                           builder: (_) => RiderChatRoomScreen(
                                             peerUid: customerUid,
-                                            peerLabel: 'ลูกค้า',
+                                            peerLabel: L10n.customer,
                                             orderId: doc.id,
                                           ),
                                         ),
@@ -645,14 +652,14 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                                 },
                                 style: _orderActionButtonStyle(),
                                 icon: const Icon(Icons.map_outlined),
-                                label: const Text('แผนที่ปลายทาง'),
+                                label: Text(L10n.destinationMap),
                               )
                             else
                               OutlinedButton.icon(
                                 onPressed: null,
                                 style: _orderActionButtonStyle(),
                                 icon: const Icon(Icons.map_outlined),
-                                label: const Text('แผนที่ปลายทาง'),
+                                label: Text(L10n.destinationMap),
                               ),
                             if (status == 'accepted') ...[
                               const SizedBox(height: 8),
@@ -667,7 +674,7 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                                 },
                                 style: _orderActionButtonStyle(),
                                 icon: const Icon(Icons.place_outlined),
-                                label: const Text('ถึงจุดรับแล้ว'),
+                                label: Text(L10n.arrivedAtPickup),
                               ),
                             ],
                             if (status == 'ready') ...[
@@ -682,7 +689,7 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                                 },
                                 style: _orderActionButtonStyle(),
                                 icon: const Icon(Icons.directions_bike_outlined),
-                                label: const Text('เริ่มเดินทาง'),
+                                label: Text(L10n.startTrip),
                               ),
                             ],
                             if (status == 'delivering') ...[
@@ -698,7 +705,7 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                                 },
                                 style: _orderActionButtonStyle(),
                                 icon: const Icon(Icons.flag_outlined),
-                                label: const Text('ถึงจุดหมายปลายทาง'),
+                                label: Text(L10n.arrivedAtDestination),
                               ),
                             ],
                           ],
@@ -726,7 +733,7 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                                 icon: const Icon(
                                   Icons.store_mall_directory_outlined,
                                 ),
-                                label: const Text('แผนที่ร้าน'),
+                                label: Text(L10n.shopMap),
                               )
                             else
                               OutlinedButton.icon(
@@ -735,7 +742,7 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                                 icon: const Icon(
                                   Icons.store_mall_directory_outlined,
                                 ),
-                                label: const Text('แผนที่ร้าน'),
+                                label: Text(L10n.shopMap),
                               ),
                             const SizedBox(height: 8),
                             OutlinedButton.icon(
@@ -758,13 +765,13 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                                     },
                               style: _orderActionButtonStyle(),
                               icon: const Icon(Icons.support_agent_rounded),
-                              label: const Text('โทรร้านค้า'),
+                              label: Text(L10n.callShop),
                             ),
                             const SizedBox(height: 8),
                             _PeerChatButton(
                               peerUid: shopOwnerUid,
-                              peerLabel: 'ร้านค้า',
-                              label: 'แชตร้านค้า',
+                              peerLabel: L10n.shop,
+                              label: L10n.chatShop,
                               icon: Icons.storefront_outlined,
                               onPressed:
                                   shopOwnerUid == null || shopOwnerUid.isEmpty
@@ -774,7 +781,7 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                                         MaterialPageRoute<void>(
                                           builder: (_) => RiderChatRoomScreen(
                                             peerUid: shopOwnerUid,
-                                            peerLabel: 'ร้านค้า',
+                                            peerLabel: L10n.shop,
                                             orderId: doc.id,
                                           ),
                                         ),
@@ -799,14 +806,14 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                                 },
                                 style: _orderActionButtonStyle(),
                                 icon: const Icon(Icons.map_outlined),
-                                label: const Text('แผนที่ลูกค้า'),
+                                label: Text(L10n.customerMap),
                               )
                             else
                               OutlinedButton.icon(
                                 onPressed: null,
                                 style: _orderActionButtonStyle(),
                                 icon: const Icon(Icons.map_outlined),
-                                label: const Text('แผนที่ลูกค้า'),
+                                label: Text(L10n.customerMap),
                               ),
                             const SizedBox(height: 8),
                             OutlinedButton.icon(
@@ -831,13 +838,13 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                                     },
                               style: _orderActionButtonStyle(),
                               icon: const Icon(Icons.phone),
-                              label: const Text('โทรลูกค้า'),
+                              label: Text(L10n.callCustomer),
                             ),
                             const SizedBox(height: 8),
                             _PeerChatButton(
                               peerUid: customerUid,
-                              peerLabel: 'ลูกค้า',
-                              label: 'แชตลูกค้า',
+                              peerLabel: L10n.customer,
+                              label: L10n.chatCustomer,
                               icon: Icons.chat_bubble_outline_rounded,
                               onPressed:
                                   customerUid == null || customerUid.isEmpty
@@ -847,7 +854,7 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                                         MaterialPageRoute<void>(
                                           builder: (_) => RiderChatRoomScreen(
                                             peerUid: customerUid,
-                                            peerLabel: 'ลูกค้า',
+                                            peerLabel: L10n.customer,
                                             orderId: doc.id,
                                           ),
                                         ),
@@ -864,7 +871,7 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
               SizedBox(
                 width: double.infinity,
                 child: Text(
-                  'ยอดรวม: THB ${total.toStringAsFixed(1)}',
+                  L10n.totalThb(total.toDouble()),
                   textAlign: TextAlign.end,
                   style: const TextStyle(
                     fontWeight: FontWeight.w800,
@@ -1505,7 +1512,7 @@ class _HistoryDaySummaryCard extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            'ส่งสำเร็จ ${summary.deliveredCount} งาน',
+            L10n.deliveredCount(summary.deliveredCount),
             style: const TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
@@ -1514,7 +1521,7 @@ class _HistoryDaySummaryCard extends StatelessWidget {
           ),
           const SizedBox(height: 2),
           Text(
-            'รายได้สุทธิรวม THB ${summary.netIncomeTotal.toStringAsFixed(1)}',
+            L10n.last7DaysNetIncome(summary.netIncomeTotal),
             style: const TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w700,
@@ -1606,8 +1613,8 @@ class _OrderProductTile extends StatelessWidget {
               children: [
                 Text(name, style: const TextStyle(fontWeight: FontWeight.w700)),
                 const SizedBox(height: 2),
-                Text('จำนวน $quantity ชิ้น'),
-                Text('ราคา THB ${unitPrice.toStringAsFixed(1)}'),
+                Text(L10n.quantityPieces(quantity)),
+                Text(L10n.priceThb(unitPrice)),
               ],
             ),
           ),

@@ -1,0 +1,17 @@
+---
+description: Deploy ตามชุด BUNDLE — ทางเข้า deploy.ps1 เท่านั้น
+alwaysApply: true
+---
+
+# Deploy Bundle Gate (van-merchant)
+
+ทางเข้า: `..\van2\scripts\deploy.ps1`  
+สารบัญ: `..\van2\scripts\deploy-bundles\BUNDLE-CATALOG.th.md`
+
+```powershell
+..\van2\scripts\deploy.ps1 -List
+..\van2\scripts\deploy.ps1 -Bundle BUNDLE-ST3 -ShowOnly
+..\van2\scripts\deploy.ps1 -Health -App van3
+```
+
+ห้าม `firebase deploy` ดิบ · van3 deploy ได้แค่ storage/hosting · หลัง SHARED ต้อง smoke van3

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'l10n/l10n.dart';
 import 'services/notification_service.dart';
 import 'services/privacy_consent_service.dart';
 
@@ -61,15 +62,15 @@ class _PrivacyLaunchGateState extends State<PrivacyLaunchGate> {
               children: [
                 const Icon(Icons.policy_outlined, size: 48),
                 const SizedBox(height: 16),
-                const Text(
-                  'ต้องยอมรับข้อกำหนดและนโยบายความเป็นส่วนตัวก่อนใช้งาน',
+                Text(
+                  L10n.privacyMustAcceptGate,
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontWeight: FontWeight.w700),
+                  style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 16),
                 FilledButton(
                   onPressed: _runGate,
-                  child: const Text('ดูข้อกำหนดอีกครั้ง'),
+                  child: Text(L10n.privacyReviewTermsAgain),
                 ),
               ],
             ),

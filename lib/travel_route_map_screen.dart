@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
+import 'l10n/l10n.dart';
 import 'services/rider_order_actions.dart';
 import 'utils/driving_route_service.dart';
 import 'utils/travel_vehicle_map_marker.dart';
@@ -171,7 +172,7 @@ class _TravelRouteMapScreenState extends State<TravelRouteMapScreen> {
         return (
           origin: origin,
           destination: pickup,
-          etaTargetLabel: 'จุดรับ',
+          etaTargetLabel: L10n.pickupPointShort,
         );
       case RiderTravelMapLeg.destination:
         if (pickup == null || destination == null) {
@@ -180,7 +181,7 @@ class _TravelRouteMapScreenState extends State<TravelRouteMapScreen> {
         return (
           origin: pickup,
           destination: destination,
-          etaTargetLabel: 'ปลายทาง',
+          etaTargetLabel: L10n.destination,
         );
     }
   }
@@ -324,7 +325,7 @@ class _TravelRouteMapScreenState extends State<TravelRouteMapScreen> {
           markerId: const MarkerId('pickup'),
           position: pickup,
           icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
-          infoWindow: const InfoWindow(title: 'จุดรับ'),
+          infoWindow: InfoWindow(title: L10n.pickupPointShort),
         ),
       );
     }
@@ -336,7 +337,7 @@ class _TravelRouteMapScreenState extends State<TravelRouteMapScreen> {
           markerId: const MarkerId('destination'),
           position: destination,
           icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-          infoWindow: const InfoWindow(title: 'ปลายทาง'),
+          infoWindow: InfoWindow(title: L10n.destination),
         ),
       );
     }
@@ -351,7 +352,7 @@ class _TravelRouteMapScreenState extends State<TravelRouteMapScreen> {
               BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
           anchor: const Offset(0.5, 1.0),
           infoWindow: InfoWindow(
-            title: 'ตำแหน่งของคุณ',
+            title: L10n.yourLocation,
             snippet: _vehicleType.label,
           ),
         ),
@@ -386,15 +387,15 @@ class _TravelRouteMapScreenState extends State<TravelRouteMapScreen> {
 
   String get _title {
     return switch (widget.leg) {
-      RiderTravelMapLeg.pickup => 'แผนที่จุดรับ',
-      RiderTravelMapLeg.destination => 'แผนที่ปลายทาง',
+      RiderTravelMapLeg.pickup => L10n.pickupMap,
+      RiderTravelMapLeg.destination => L10n.destinationMap,
     };
   }
 
   String get _subtitle {
     return switch (widget.leg) {
-      RiderTravelMapLeg.pickup => 'เส้นทางไปจุดรับผู้โดยสาร',
-      RiderTravelMapLeg.destination => 'เส้นทางจากจุดรับไปปลายทาง',
+      RiderTravelMapLeg.pickup => L10n.routeToPickupPassenger,
+      RiderTravelMapLeg.destination => L10n.routePickupToDestination,
     };
   }
 
@@ -402,11 +403,13 @@ class _TravelRouteMapScreenState extends State<TravelRouteMapScreen> {
     if (_etaMinutes == null) {
       return null;
     }
-    final target = widget.leg == RiderTravelMapLeg.pickup ? 'จุดรับ' : 'ปลายทาง';
+    final target = widget.leg == RiderTravelMapLeg.pickup
+        ? L10n.pickupPointShort
+        : L10n.destination;
     final arrival = DateTime.now().add(Duration(minutes: _etaMinutes!));
     final hour = arrival.hour.toString().padLeft(2, '0');
     final minute = arrival.minute.toString().padLeft(2, '0');
-    return 'ถึง$targetประมาณ $_etaMinutes นาที (โดยประมาณ $hour:$minute น.)';
+    return L10n.etaArrivalEstimate(target, _etaMinutes!, '$hour:$minute');
   }
 
   @override
@@ -446,15 +449,18 @@ class _TravelRouteMapScreenState extends State<TravelRouteMapScreen> {
             ),
           ),
           if (_isLoadingRoute)
-            const SafeArea(
+            SafeArea(
               child: Align(
                 alignment: Alignment.topCenter,
                 child: Padding(
-                  padding: EdgeInsets.only(top: 64),
+                  padding: const EdgeInsets.only(top: 64),
                   child: Card(
                     child: Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      child: Text('กำลังอัปเดตเส้นทาง...'),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      child: Text(L10n.updatingRoute),
                     ),
                   ),
                 ),

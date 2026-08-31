@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import 'l10n/l10n.dart';
 import 'services/admin_support_config.dart';
 import 'services/admin_support_service.dart';
 import 'utils/app_colors.dart';
@@ -58,7 +59,7 @@ class _AdminContactScreenState extends State<AdminContactScreen> {
     final remaining =
         AdminSupportService.maxImages - _pendingImages.length;
     if (remaining <= 0) {
-      _showSnack('แนบรูปได้สูงสุด ${AdminSupportService.maxImages} รูป');
+      _showSnack(L10n.adminSupportMaxImages(AdminSupportService.maxImages));
       return;
     }
 
@@ -73,20 +74,20 @@ class _AdminContactScreenState extends State<AdminContactScreen> {
         );
       });
     } catch (error) {
-      _showSnack('เลือกรูปไม่สำเร็จ: $error');
+      _showSnack(L10n.pickImageFailed(error));
     }
   }
 
   Future<void> _submit() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      _showSnack('กรุณาเข้าสู่ระบบก่อน');
+      _showSnack(L10n.signInRequiredFirst);
       return;
     }
 
     final topic = _selectedTopic;
     if (topic == null) {
-      _showSnack('กรุณาเลือกหัวข้อ');
+      _showSnack(L10n.adminContactSelectTopic);
       return;
     }
 
@@ -94,11 +95,11 @@ class _AdminContactScreenState extends State<AdminContactScreen> {
     if (_isCustomTopic) {
       topicLabel = _customTopicController.text.trim();
       if (topicLabel.isEmpty) {
-        _showSnack('กรุณาพิมพ์หัวข้อที่ต้องการสอบถาม');
+        _showSnack(L10n.adminContactEnterCustomTopic);
         return;
       }
       if (topicLabel.length > AdminSupportService.maxCustomTopicLength) {
-        _showSnack('หัวข้อยาวเกินไป');
+        _showSnack(L10n.adminContactTopicTooLong);
         return;
       }
     }
@@ -117,12 +118,12 @@ class _AdminContactScreenState extends State<AdminContactScreen> {
       }
       Navigator.of(context).pop();
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('ส่งข้อความถึงแอดมินแล้ว รอการติดต่อกลับ'),
+        SnackBar(
+          content: Text(L10n.adminContactSentSuccess),
         ),
       );
     } catch (error) {
-      _showSnack('ส่งไม่สำเร็จ: $error');
+      _showSnack(L10n.adminSupportSendFailedWithError(error));
     } finally {
       if (mounted) {
         setState(() => _submitting = false);
@@ -145,9 +146,9 @@ class _AdminContactScreenState extends State<AdminContactScreen> {
       appBar: AppBar(
         backgroundColor: widget.accentColor,
         foregroundColor: Colors.white,
-        title: const Text(
-          'ติดต่อแอดมิน',
-          style: TextStyle(fontWeight: FontWeight.w800),
+        title: Text(
+          L10n.adminContactTitle,
+          style: const TextStyle(fontWeight: FontWeight.w800),
         ),
       ),
       body: ListView(
@@ -164,7 +165,7 @@ class _AdminContactScreenState extends State<AdminContactScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 Text(
-                  'ส่งจาก: ${widget.config.sourceLabel}',
+                  L10n.sentFromSource(widget.config.sourceLabel),
                   style: const TextStyle(
                     fontWeight: FontWeight.w800,
                     color: Color(0xFF9A3412),
@@ -172,7 +173,7 @@ class _AdminContactScreenState extends State<AdminContactScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'เลือกหัวข้อที่ตรงกับปัญหา อธิบายรายละเอียด และแนบรูปประกอบได้ (บีบอัดอัตโนมัติ)',
+                  L10n.adminContactInstructions,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: const Color(0xFF92400E),
                         height: 1.35,
@@ -183,7 +184,7 @@ class _AdminContactScreenState extends State<AdminContactScreen> {
           ),
           const SizedBox(height: 16),
           Text(
-            'หัวข้อที่ต้องการสอบถาม',
+            L10n.adminContactTopicSection,
             style: Theme.of(context).textTheme.titleSmall?.copyWith(
                   fontWeight: FontWeight.w800,
                 ),
@@ -206,9 +207,9 @@ class _AdminContactScreenState extends State<AdminContactScreen> {
               controller: _customTopicController,
               enabled: !_submitting,
               maxLength: AdminSupportService.maxCustomTopicLength,
-              decoration: const InputDecoration(
-                labelText: 'พิมพ์หัวข้อเอง',
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: L10n.adminContactCustomTopicLabel,
+                border: const OutlineInputBorder(),
               ),
             ),
           ],
@@ -218,11 +219,11 @@ class _AdminContactScreenState extends State<AdminContactScreen> {
             enabled: !_submitting,
             maxLines: 6,
             maxLength: AdminSupportService.maxMessageLength,
-            decoration: const InputDecoration(
-              labelText: 'รายละเอียด',
-              hintText: 'อธิบายปัญหา วันที่เกิดขึ้น หรือเลขออเดอร์ (ถ้ามี)',
+            decoration: InputDecoration(
+              labelText: L10n.adminContactDetailsLabel,
+              hintText: L10n.adminContactDetailsHint,
               alignLabelWithHint: true,
-              border: OutlineInputBorder(),
+              border: const OutlineInputBorder(),
             ),
           ),
           const SizedBox(height: 12),
@@ -232,7 +233,10 @@ class _AdminContactScreenState extends State<AdminContactScreen> {
                 onPressed: _submitting ? null : _pickImages,
                 icon: const Icon(Icons.photo_library_outlined),
                 label: Text(
-                  'แนบรูป (${_pendingImages.length}/${AdminSupportService.maxImages})',
+                  L10n.attachPhotosCount(
+                    _pendingImages.length,
+                    AdminSupportService.maxImages,
+                  ),
                 ),
               ),
             ],
@@ -293,7 +297,9 @@ class _AdminContactScreenState extends State<AdminContactScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.send_rounded),
-            label: Text(_submitting ? 'กำลังส่ง...' : 'ส่งถึงแอดมิน'),
+            label: Text(
+              _submitting ? L10n.submitting : L10n.adminContactSubmit,
+            ),
           ),
         ],
       ),

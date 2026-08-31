@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import '../l10n/l10n.dart';
+import 'promptpay_qr_payload.dart';
+
 enum RiderAccessStatus {
   approved,
   pending,
@@ -29,6 +32,8 @@ class RiderProfileData {
     this.isElectricVehicle = false,
     this.pushOptIn = false,
     this.registrationStatus,
+    this.promptPayPhoneNumber,
+    this.promptPayNationalId,
   });
 
   final String? displayName;
@@ -48,6 +53,8 @@ class RiderProfileData {
   final bool isElectricVehicle;
   final bool pushOptIn;
   final String? registrationStatus;
+  final String? promptPayPhoneNumber;
+  final String? promptPayNationalId;
 
   /// Fields van2 travel page reads from `riders/{uid}`.
   bool get isCompleteForCustomerTravel {
@@ -56,6 +63,13 @@ class RiderProfileData {
         _nonEmpty(licensePlate) &&
         _nonEmpty(vehicleColor) &&
         _nonEmpty(vehicleBrandModel);
+  }
+
+  bool get hasPromptPayForPayout {
+    return PromptPayQrPayload.hasValidPayoutProfile(
+      phone: promptPayPhoneNumber,
+      nationalId: promptPayNationalId,
+    );
   }
 
   static bool _nonEmpty(String? value) => value?.trim().isNotEmpty == true;
@@ -82,6 +96,11 @@ class RiderProfileData {
       isElectricVehicle: data['isElectricVehicle'] == true,
       pushOptIn: data['pushOptIn'] == true,
       registrationStatus: data['registrationStatus']?.toString(),
+      promptPayPhoneNumber: data['promptPayPhoneNumber']?.toString().trim(),
+      promptPayNationalId: (data['promptPayNationalId'] ??
+              data['promptPayNationalIdOrTaxId'])
+          ?.toString()
+          .trim(),
     );
   }
 
@@ -249,6 +268,8 @@ class RiderRegistrationService {
     required String bankName,
     required String accountNumber,
     required String accountOwner,
+    String? promptPayPhoneNumber,
+    String? promptPayNationalId,
     required String contactEmail,
     required String driverLicenseImageUrl,
     required String motorcycleImageUrl,
@@ -264,7 +285,7 @@ class RiderRegistrationService {
     bool pushOptIn = false,
   }) async {
     if (!acceptedPrivacy) {
-      throw StateError('ต้องยอมรับนโยบายความเป็นส่วนตัว');
+      throw StateError(L10n.privacyPolicyRequired);
     }
 
     final now = FieldValue.serverTimestamp();
@@ -282,6 +303,12 @@ class RiderRegistrationService {
       'accountNumber': accountNumber,
       'accountOwner': accountOwner,
       'accountName': accountOwner,
+      if (promptPayPhoneNumber?.trim().isNotEmpty == true)
+        'promptPayPhoneNumber':
+            promptPayPhoneNumber!.replaceAll(RegExp(r'\D'), ''),
+      if (promptPayNationalId?.trim().isNotEmpty == true)
+        'promptPayNationalId':
+            promptPayNationalId!.replaceAll(RegExp(r'\D'), ''),
       'driverLicenseImageUrl': driverLicenseImageUrl,
       'motorcycleImageUrl': motorcycleImageUrl,
       'bookBankImageUrl': bookBankImageUrl,
@@ -357,6 +384,8 @@ class RiderRegistrationService {
     String? vehicleBrandModel,
     bool? isElectricVehicle,
     bool? pushOptIn,
+    String? promptPayPhoneNumber,
+    String? promptPayNationalId,
     String? registrationStatus,
   }) async {
     final payload = <String, dynamic>{
@@ -395,6 +424,14 @@ class RiderRegistrationService {
     }
     if (pushOptIn != null) {
       payload['pushOptIn'] = pushOptIn;
+    }
+    final ppPhone = promptPayPhoneNumber?.replaceAll(RegExp(r'\D'), '');
+    if (ppPhone != null && ppPhone.isNotEmpty) {
+      payload['promptPayPhoneNumber'] = ppPhone;
+    }
+    final ppNational = promptPayNationalId?.replaceAll(RegExp(r'\D'), '');
+    if (ppNational != null && ppNational.isNotEmpty) {
+      payload['promptPayNationalId'] = ppNational;
     }
     // registrationStatus is admin-controlled and blocked by Firestore rules on update.
 

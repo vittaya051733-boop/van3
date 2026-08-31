@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'l10n/l10n.dart';
 import 'utils/app_colors.dart';
 
 class RiderReviewsScreen extends StatelessWidget {
@@ -13,17 +14,17 @@ class RiderReviewsScreen extends StatelessWidget {
     if (uid == null || uid.isEmpty) {
       return Scaffold(
         appBar: AppBar(
-          title: const Text('รีวิวจากลูกค้า'),
+          title: Text(L10n.customerReviews),
           backgroundColor: AppColors.accent,
           foregroundColor: Colors.white,
         ),
-        body: const Center(child: Text('กรุณาเข้าสู่ระบบก่อน')),
+        body: Center(child: Text(L10n.signInRequiredFirst)),
       );
     }
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('รีวิวจากลูกค้า'),
+        title: Text(L10n.customerReviews),
         backgroundColor: AppColors.accent,
         foregroundColor: Colors.white,
       ),
@@ -44,7 +45,7 @@ class RiderReviewsScreen extends StatelessWidget {
               child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: Text(
-                  'โหลดรีวิวไม่สำเร็จ\n${snapshot.error}',
+                  L10n.reviewsLoadFailedWithError(snapshot.error!),
                   textAlign: TextAlign.center,
                 ),
               ),
@@ -67,12 +68,12 @@ class RiderReviewsScreen extends StatelessWidget {
             });
 
           if (docs.isEmpty) {
-            return const Center(
+            return Center(
               child: Padding(
-                padding: EdgeInsets.all(24),
+                padding: const EdgeInsets.all(24),
                 child: Text(
-                  'ยังไม่มีรีวิวจากลูกค้า',
-                  style: TextStyle(color: Colors.black54, fontSize: 15),
+                  L10n.noCustomerReviewsYet,
+                  style: const TextStyle(color: Colors.black54, fontSize: 15),
                 ),
               ),
             );
@@ -137,8 +138,8 @@ class _RiderReviewCard extends StatelessWidget {
               Expanded(
                 child: Text(
                   orderId != null && orderId!.isNotEmpty
-                      ? 'ออเดอร์ $orderId'
-                      : 'รีวิวการให้บริการ',
+                      ? L10n.reviewForOrder(orderId!)
+                      : L10n.reviewService,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -212,9 +213,9 @@ class _RiderReviewCard extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 6),
-          const Text(
-            'อ่านอย่างเดียว — แก้ไขได้เฉพาะลูกค้า',
-            style: TextStyle(fontSize: 11, color: Color(0xFF9CA3AF)),
+          Text(
+            L10n.reviewsReadOnlyCustomer,
+            style: const TextStyle(fontSize: 11, color: Color(0xFF9CA3AF)),
           ),
         ],
       ),

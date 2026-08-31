@@ -6,7 +6,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import 'l10n/l10n.dart';
 import 'services/rider_location_pusher.dart';
+import 'utils/guarded_functions.dart';
 
 class DriverScannerScreen extends StatefulWidget {
   const DriverScannerScreen({
@@ -41,8 +43,8 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
       appBar: AppBar(
         title: Text(
           widget.orderCode?.trim().isNotEmpty == true
-              ? 'สแกนคิวอาร์ ${widget.orderCode!.trim()}'
-              : 'สแกนคิวอาร์ออเดอร์',
+              ? L10n.scanQrForOrder(widget.orderCode!.trim())
+              : L10n.scanQrOrder,
         ),
         actions: [
           IconButton(
@@ -74,13 +76,13 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
                   top: Radius.circular(20),
                 ),
               ),
-              child: const Column(
+              child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(Icons.qr_code_scanner, color: Colors.white, size: 48),
                   SizedBox(height: 16),
                   Text(
-                    'วางกล้องตรงกับ QR Code',
+                    L10n.alignCameraWithQr,
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 18,
@@ -89,7 +91,7 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
                   ),
                   SizedBox(height: 8),
                   Text(
-                    'สแกน QR ออเดอร์เพื่อรับสินค้า\nและสแกน QR เดิมอีกครั้งเมื่อส่งสำเร็จ',
+                    L10n.scanQrInstructions,
                     style: TextStyle(color: Colors.white70, fontSize: 14),
                     textAlign: TextAlign.center,
                   ),
@@ -101,7 +103,7 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
             Container(
               color: Colors.black54,
               alignment: Alignment.center,
-              child: const Card(
+              child: Card(
                 child: Padding(
                   padding: EdgeInsets.all(24),
                   child: Column(
@@ -109,7 +111,7 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
                     children: [
                       CircularProgressIndicator(),
                       SizedBox(height: 16),
-                      Text('กำลังประมวลผล...'),
+                      Text(L10n.processing),
                     ],
                   ),
                 ),
@@ -138,7 +140,7 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
     try {
       final payload = _parseQrPayload(qrCode);
       if (payload == null) {
-        _showError('QR Code ไม่ถูกต้อง');
+        _showError(L10n.invalidQrCode);
       } else if (payload.type == _QrPayloadType.universal) {
         await _handleUniversalQr(payload);
       } else if (payload.type == _QrPayloadType.order) {
@@ -147,7 +149,7 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
         await _handleLocationQr(payload);
       }
     } catch (error) {
-      _showError('เกิดข้อผิดพลาด: $error');
+      _showError(L10n.errorOccurred(error));
     } finally {
       if (mounted) {
         setState(() => _isProcessing = false);
@@ -164,7 +166,7 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
         .doc(widget.orderId)
         .get();
     if (!orderDoc.exists) {
-      _showError('ไม่พบออเดอร์นี้');
+      _showError(L10n.orderNotFound);
       return;
     }
 
@@ -179,13 +181,13 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
       return;
     }
 
-    _showError('ออเดอร์นี้ยังใช้ QR เดียวไม่ได้ (สถานะ: $status)');
+    _showError(L10n.orderQrNotAvailableForStatus(status));
   }
 
   Future<void> _handleOrderQr(_ScannedQrPayload payload) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      _showError('กรุณาเข้าสู่ระบบ');
+      _showError(L10n.signInRequired);
       return;
     }
 
@@ -194,7 +196,7 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
         .doc(widget.orderId);
     final orderDoc = await orderRef.get();
     if (!orderDoc.exists) {
-      _showError('ไม่พบออเดอร์นี้');
+      _showError(L10n.orderNotFound);
       return;
     }
 
@@ -208,11 +210,11 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
     final status = (data['status'] as String?)?.trim() ?? '';
     final driverId = (data['driverId'] as String?)?.trim();
     if (driverId != null && driverId.isNotEmpty && driverId != user.uid) {
-      _showError('ออเดอร์นี้ไม่ได้รับโดยคุณ');
+      _showError(L10n.orderNotAssignedToYou);
       return;
     }
     if (status != 'accepted' && status != 'ready') {
-      _showError('ออเดอร์นี้ยังไม่พร้อมเริ่มส่ง (สถานะ: $status)');
+      _showError(L10n.orderNotReadyToDeliver(status));
       return;
     }
 
@@ -236,23 +238,21 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
             Icon(Icons.local_shipping_rounded, color: Colors.green, size: 28),
             SizedBox(width: 12),
-            Text('เริ่มจัดส่งแล้ว'),
+            Text(L10n.deliveryStarted),
           ],
         ),
-        content: const Text(
-          'เมื่อถึงลูกค้าแล้ว ให้สแกน QR ออเดอร์เดิมอีกครั้งเพื่อปิดงาน',
-        ),
+        content: Text(L10n.scanAgainToComplete),
         actions: [
           FilledButton(
             onPressed: () {
               Navigator.of(context).pop();
               _scannerController.start();
             },
-            child: const Text('ตกลง'),
+            child: Text(L10n.ok),
           ),
         ],
       ),
@@ -262,7 +262,7 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
   Future<void> _handleLocationQr(_ScannedQrPayload payload) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      _showError('กรุณาเข้าสู่ระบบ');
+      _showError(L10n.signInRequired);
       return;
     }
 
@@ -271,7 +271,7 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
         .doc(widget.orderId);
     final orderDoc = await orderRef.get();
     if (!orderDoc.exists) {
-      _showError('ไม่พบออเดอร์นี้');
+      _showError(L10n.orderNotFound);
       return;
     }
 
@@ -285,22 +285,21 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
     final status = (data['status'] as String?)?.trim() ?? '';
     final driverId = (data['driverId'] as String?)?.trim();
     if (driverId != user.uid) {
-      _showError('ออเดอร์นี้ไม่ได้รับโดยคุณ');
+      _showError(L10n.orderNotAssignedToYou);
       return;
     }
     if (status != 'delivering') {
-      _showError('ออเดอร์นี้ยังไม่ได้อยู่ระหว่างจัดส่ง (สถานะ: $status)');
+      _showError(L10n.orderNotDelivering(status));
       return;
     }
 
-    final grossShippingFee = _readShippingFeeAmount(data);
-    await FirebaseFunctions.instanceFor(region: 'asia-southeast1')
-        .httpsCallable('completeRiderDelivery')
-        .call(<String, dynamic>{
-      'orderId': widget.orderId,
-      'completedSource': 'location_qr',
-      'grossShippingFee': grossShippingFee,
-    });
+    await GuardedFunctions.call(
+      'completeRiderDelivery',
+      parameters: <String, dynamic>{
+        'orderId': widget.orderId,
+        'completedSource': 'location_qr',
+      },
+    );
 
     // Push พิกัดตอนส่งสำเร็จ (action)
     unawaited(
@@ -316,21 +315,21 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
             Icon(Icons.celebration, color: Colors.green, size: 28),
             SizedBox(width: 12),
-            Text('ส่งสำเร็จ'),
+            Text(L10n.deliveryCompleted),
           ],
         ),
-        content: const Text('ปิดงานจัดส่งเรียบร้อยแล้ว'),
+        content: Text(L10n.deliveryJobClosed),
         actions: [
           FilledButton(
             onPressed: () {
               Navigator.of(context).pop();
               Navigator.of(this.context).pop(true);
             },
-            child: const Text('เสร็จสิ้น'),
+            child: Text(L10n.done),
           ),
         ],
       ),
@@ -402,7 +401,7 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
     final mismatches = <String>[];
 
     if (payload.orderId != widget.orderId) {
-      mismatches.add('ออเดอร์ไอดีไม่ตรงกัน');
+      mismatches.add(L10n.qrOrderIdMismatch);
     }
 
     final expectedOrderCode =
@@ -412,12 +411,12 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
     if (expectedOrderCode.isEmpty ||
         actualOrderCode.isEmpty ||
         expectedOrderCode != actualOrderCode) {
-      mismatches.add('หมายเลขออเดอร์ไม่ตรงกัน');
+      mismatches.add(L10n.qrOrderCodeMismatch);
     }
 
     final actualTotal = payload.orderTotal ?? _readOrderTotal(orderData);
     if (_totalsDiffer(widget.orderTotal, actualTotal)) {
-      mismatches.add('ยอดรวมไม่ตรงกัน');
+      mismatches.add(L10n.qrTotalMismatch);
     }
 
     return mismatches;
@@ -481,7 +480,7 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('ข้อมูล QR ไม่ตรงกัน'),
+        title: Text(L10n.qrMismatchTitle),
         content: Text(mismatches.join('\n')),
         actions: [
           FilledButton(
@@ -489,7 +488,7 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
               Navigator.of(context).pop();
               _scannerController.start();
             },
-            child: const Text('ตกลง'),
+            child: Text(L10n.ok),
           ),
         ],
       ),

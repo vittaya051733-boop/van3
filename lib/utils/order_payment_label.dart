@@ -1,3 +1,5 @@
+import '../l10n/l10n.dart';
+
 String? resolveOrderPaymentLabel(Map<String, dynamic> orderData) {
   String? readString(Object? value) {
     if (value == null) return null;
@@ -51,7 +53,7 @@ String? resolveOrderPaymentLabel(Map<String, dynamic> orderData) {
 
   final isCod = orderData['isCod'] == true || orderData['cashOnDelivery'] == true;
   if (key == null && isCod) {
-    return 'จ่ายปลายทาง';
+    return L10n.paymentPayAtDestination;
   }
 
   final destinationPayment = readString(orderData['destinationPaymentMethod']) ??
@@ -66,16 +68,6 @@ String? resolveOrderPaymentLabel(Map<String, dynamic> orderData) {
         value.contains('destination');
   }
 
-  bool isQrPayment(String? value) {
-    if (value == null) return false;
-    return value.contains('promptpay') ||
-        value.contains('qr') ||
-        value.contains('scan') ||
-        value.contains('qrcode') ||
-        value.contains('true_money') ||
-        value.contains('truemoney');
-  }
-
   bool isTransfer(String? value) {
     if (value == null) return false;
     return value.contains('transfer') ||
@@ -87,27 +79,20 @@ String? resolveOrderPaymentLabel(Map<String, dynamic> orderData) {
       orderData['paymentAtDestination'] == true;
 
   if (hasDestinationFlag && destinationKey != null && isTransfer(destinationKey)) {
-    return 'โอนปลายทาง';
+    return L10n.paymentTransferAtDestination;
   }
 
   if (key != null) {
     if (isPayAtDestination(key)) {
       if (destinationKey != null && isTransfer(destinationKey)) {
-        return 'โอนปลายทาง';
+        return L10n.paymentTransferAtDestination;
       }
-      return 'จ่ายปลายทาง';
+      return L10n.paymentPayAtDestination;
     }
 
-    if (isQrPayment(key)) {
-      return 'สแกนจ่าย';
-    }
-
-    if (key.contains('cash')) {
-      return 'เงินสด';
-    }
-
-    if (key.contains('transfer')) {
-      return 'โอนเงิน';
+    final fromKey = L10n.orderPaymentLabelFromKey(key);
+    if (fromKey != null) {
+      return fromKey;
     }
   }
 

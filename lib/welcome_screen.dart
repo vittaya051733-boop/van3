@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'l10n/l10n.dart';
+
 class WelcomeScreen extends StatelessWidget {
   const WelcomeScreen({super.key});
 
@@ -25,26 +27,26 @@ class WelcomeScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 20),
-              const Text(
-                'Van3 Rider',
+              Text(
+                L10n.appTitle,
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold),
+                style: const TextStyle(fontSize: 30, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
-              const Text(
-                'ระบบไรเดอร์',
+              Text(
+                L10n.riderSystem,
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.black54),
+                style: const TextStyle(color: Colors.black54),
               ),
               const SizedBox(height: 30),
               ElevatedButton(
                 onPressed: () => Navigator.of(context).pushNamed('/login'),
-                child: const Text('เข้าสู่ระบบ'),
+                child: Text(L10n.signIn),
               ),
               const SizedBox(height: 12),
               OutlinedButton(
                 onPressed: () => Navigator.of(context).pushNamed('/register'),
-                child: const Text('สมัครไรเดอร์'),
+                child: Text(L10n.registerRider),
               ),
             ],
           ),

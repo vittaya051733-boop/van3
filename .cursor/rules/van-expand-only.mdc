@@ -1,0 +1,10 @@
+---
+description: Expand-only CROSS-WRITE; no raw firebase deploy
+alwaysApply: true
+---
+
+# Expand-only + ห้าม firebase ดิบ
+
+- Schema: `..\van2\scripts\VAN_ECOSYSTEM_SCHEMA_REGISTRY.md`
+- Deploy: `..\van2\scripts\deploy.ps1` เท่านั้น
+- ห้าม `firebase deploy` ดิบ

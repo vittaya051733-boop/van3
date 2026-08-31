@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
 
+import '../utils/app_check_guard.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -10,6 +11,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../l10n/l10n.dart';
 import '../call_screen.dart';
 import '../main.dart';
 import '../models/user_profile.dart';
@@ -120,7 +122,7 @@ class NotificationService {
         appId: data['appId'],
         token: data['token'],
         callerId: data['callerId'] ?? data['caller_id'] ?? '',
-        callerName: data['callerName'] ?? 'ผู้โทร',
+        callerName: data['callerName'] ?? L10n.caller,
         callerPhotoUrl: data['callerPhotoUrl'],
         isVideo: _resolveIsVideoFlag(data),
       );
@@ -128,7 +130,7 @@ class NotificationService {
     }
 
     if (data['type'] == 'chat') {
-      final senderName = (data['senderName'] ?? data['title'] ?? 'ข้อความใหม่').toString();
+      final senderName = (data['senderName'] ?? data['title'] ?? L10n.newMessage).toString();
       final messageText = (data['message'] ?? data['body'] ?? '').toString();
       await _showLocalNotification(
         title: senderName,
@@ -154,10 +156,10 @@ class NotificationService {
       return;
     }
 
-    const channel = AndroidNotificationChannel(
+    final channel = AndroidNotificationChannel(
       'chat_channel_van3',
-      'การแจ้งเตือนแชท van3',
-      description: 'ใช้สำหรับแจ้งเตือนข้อความแชทของไรเดอร์',
+      L10n.chatNotificationChannelName,
+      description: L10n.chatNotificationChannelDesc,
       importance: Importance.high,
       playSound: true,
     );
@@ -169,10 +171,10 @@ class NotificationService {
     required String body,
     String? payload,
   }) async {
-    const androidDetails = AndroidNotificationDetails(
+    final androidDetails = AndroidNotificationDetails(
       'chat_channel_van3',
-      'การแจ้งเตือนแชท van3',
-      channelDescription: 'ใช้สำหรับแจ้งเตือนข้อความแชทของไรเดอร์',
+      L10n.chatNotificationChannelName,
+      channelDescription: L10n.chatNotificationChannelDesc,
       importance: Importance.high,
       priority: Priority.high,
       enableVibration: true,
@@ -188,7 +190,7 @@ class NotificationService {
       DateTime.now().millisecondsSinceEpoch ~/ 1000,
       title,
       body,
-      const NotificationDetails(android: androidDetails, iOS: iosDetails),
+      NotificationDetails(android: androidDetails, iOS: iosDetails),
       payload: payload,
     );
   }
@@ -227,7 +229,7 @@ class NotificationService {
         appId: message.data['appId'],
         token: message.data['token'],
         callerId: message.data['callerId'] ?? message.data['caller_id'] ?? '',
-        callerName: message.data['callerName'] ?? 'ผู้โทร',
+        callerName: message.data['callerName'] ?? L10n.caller,
         callerPhotoUrl: message.data['callerPhotoUrl'],
         isVideo: _resolveIsVideoFlag(message.data),
       );
@@ -304,7 +306,7 @@ class NotificationService {
       appId: payload['appId'] as String?,
       token: payload['token'] as String?,
       callerId: payload['callerId'] as String? ?? '',
-      callerName: payload['callerName'] as String? ?? 'ผู้โทร',
+      callerName: payload['callerName'] as String? ?? L10n.caller,
       callerPhotoUrl: payload['callerPhotoUrl'] as String?,
       isVideo: payload['isVideo'] == true,
       minimizeOnEnd: minimizeOnEnd,
@@ -474,7 +476,7 @@ class NotificationService {
       return;
     }
 
-    final senderName = (data['senderName'] ?? data['title'] ?? 'คู่สนทนา').toString();
+    final senderName = (data['senderName'] ?? data['title'] ?? L10n.chatPartner).toString();
     final orderId = data['orderId']?.toString().trim();
     navigatorState.push(
       MaterialPageRoute<void>(
@@ -492,6 +494,7 @@ class NotificationService {
     required String calleeId,
   }) async {
     try {
+      await AppCheckGuard.ensureCallableReady();
       final callable = FirebaseFunctions.instanceFor(region: 'asia-southeast1')
           .httpsCallable('cancelCallInvite');
       await callable.call({
@@ -509,6 +512,7 @@ class NotificationService {
     required UserProfile callee,
     required bool isVideo,
   }) async {
+    await AppCheckGuard.ensureCallableReady();
     const List<String> preferredRegions = <String>['asia-southeast1', 'us-central1'];
     FirebaseFunctionsException? lastError;
 

@@ -5,6 +5,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 import 'data/legal_content.dart';
 import 'legal_document_screen.dart';
+import 'l10n/l10n.dart';
 import 'services/notification_service.dart';
 import 'services/privacy_consent_service.dart';
 
@@ -60,7 +61,7 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('บันทึกการตั้งค่าแจ้งเตือนไม่สำเร็จ: $error')),
+          SnackBar(content: Text(L10n.saveNotificationSettingsFailed(error))),
         );
       }
       await _loadPreferences();
@@ -83,7 +84,7 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('บันทึกการตั้งค่าการตลาดไม่สำเร็จ: $error')),
+          SnackBar(content: Text(L10n.saveMarketingSettingsFailed(error))),
         );
       }
       await _loadPreferences();
@@ -97,7 +98,7 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('กรุณาเข้าสู่ระบบก่อนส่งคำขอ')),
+        SnackBar(content: Text(L10n.privacyRequestSignInRequired)),
       );
       return;
     }
@@ -106,21 +107,19 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text(switch (type) {
-          'export' => 'ขอส่งออกข้อมูล',
-          'delete' => 'ขอลบบัญชี',
-          _ => 'ขอแก้ไขข้อมูล',
+          'export' => L10n.privacyExportData,
+          'delete' => L10n.privacyDeleteAccount,
+          _ => L10n.privacyCorrectData,
         }),
-        content: const Text(
-          'ระบบจะสร้างคำขอ PDPA และแจ้งแอดมิน ต้องการดำเนินการต่อหรือไม่?',
-        ),
+        content: Text(L10n.privacyRequestConfirmBody),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('ยกเลิก'),
+            child: Text(L10n.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('ส่งคำขอ'),
+            child: Text(L10n.privacyRequestSubmit),
           ),
         ],
       ),
@@ -135,12 +134,12 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('ส่งคำขอแล้ว (${result.requestId})')),
+        SnackBar(content: Text(L10n.privacyRequestSubmitted(result.requestId))),
       );
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('ส่งคำขอไม่สำเร็จ: $error')),
+          SnackBar(content: Text(L10n.privacyRequestFailed(error))),
         );
       }
     } finally {
@@ -152,14 +151,14 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(title: const Text('ความเป็นส่วนตัวและความปลอดภัย')),
+      appBar: AppBar(title: Text(L10n.privacySecurityTitle)),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
               children: [
                 ListTile(
                   leading: const Icon(Icons.policy_outlined),
-                  title: const Text('นโยบายความเป็นส่วนตัว'),
+                  title: Text(LegalContent.privacyPolicy.title(L10n.en)),
                   trailing: const Icon(Icons.chevron_right_rounded),
                   onTap: () => Navigator.push(
                     context,
@@ -172,7 +171,7 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
                 ),
                 ListTile(
                   leading: const Icon(Icons.description_outlined),
-                  title: const Text('ข้อกำหนดการใช้งาน'),
+                  title: Text(LegalContent.termsOfService.title(L10n.en)),
                   trailing: const Icon(Icons.chevron_right_rounded),
                   onTap: () => Navigator.push(
                     context,
@@ -185,7 +184,7 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
                 ),
                 ListTile(
                   leading: const Icon(Icons.inventory_2_outlined),
-                  title: const Text('ข้อมูลที่เราเก็บ'),
+                  title: Text(LegalContent.dataSummary.title(L10n.en)),
                   trailing: const Icon(Icons.chevron_right_rounded),
                   onTap: () => Navigator.push(
                     context,
@@ -198,34 +197,34 @@ class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
                 ),
                 const Divider(height: 1),
                 SwitchListTile(
-                  title: const Text('แจ้งเตือนงาน'),
+                  title: Text(L10n.privacyJobNotificationsToggle),
                   value: _pushOptIn,
                   onChanged: _busy ? null : _setPushOptIn,
                 ),
                 SwitchListTile(
-                  title: const Text('ข่าวโปรโมชัน'),
+                  title: Text(L10n.privacyPromotionsToggle),
                   value: _marketingOptIn,
                   onChanged: _busy ? null : _setMarketingOptIn,
                 ),
                 const Divider(height: 1),
                 ListTile(
                   leading: const Icon(Icons.download_outlined),
-                  title: const Text('ขอส่งออกข้อมูล'),
+                  title: Text(L10n.privacyExportData),
                   onTap: _busy ? null : () => _submitPrivacyRequest('export'),
                 ),
                 ListTile(
                   leading: const Icon(Icons.edit_note_outlined),
-                  title: const Text('ขอแก้ไขข้อมูล'),
+                  title: Text(L10n.privacyCorrectData),
                   onTap: _busy ? null : () => _submitPrivacyRequest('correct'),
                 ),
                 ListTile(
                   leading: const Icon(Icons.delete_forever_outlined),
-                  title: const Text('ขอลบบัญชี'),
+                  title: Text(L10n.privacyDeleteAccount),
                   onTap: _busy ? null : () => _submitPrivacyRequest('delete'),
                 ),
                 ListTile(
                   leading: const Icon(Icons.admin_panel_settings_outlined),
-                  title: const Text('จัดการสิทธิ์แอป'),
+                  title: Text(L10n.privacyManageAppPermissions),
                   trailing: const Icon(Icons.chevron_right_rounded),
                   onTap: _openSystemSettings,
                 ),

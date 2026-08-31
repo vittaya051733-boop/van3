@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import 'l10n/l10n.dart';
 import 'utils/admin_support_call_launcher.dart';
 import 'services/admin_support_service.dart';
 
@@ -47,7 +48,7 @@ class _AdminSupportThreadScreenState extends State<AdminSupportThreadScreen> {
     final remaining =
         AdminSupportService.maxImages - _pendingImages.length;
     if (remaining <= 0) {
-      _snack('แนบรูปได้สูงสุด ${AdminSupportService.maxImages} รูป');
+      _snack(L10n.adminSupportMaxImages(AdminSupportService.maxImages));
       return;
     }
     try {
@@ -61,7 +62,7 @@ class _AdminSupportThreadScreenState extends State<AdminSupportThreadScreen> {
         );
       });
     } catch (error) {
-      _snack('เลือกรูปไม่สำเร็จ: $error');
+      _snack(L10n.pickImageFailed(error));
     }
   }
 
@@ -80,7 +81,7 @@ class _AdminSupportThreadScreenState extends State<AdminSupportThreadScreen> {
       setState(() => _pendingImages.clear());
       await _scrollToBottom();
     } catch (error) {
-      _snack('ส่งไม่สำเร็จ: $error');
+      _snack(L10n.adminSupportSendFailedWithError(error));
     } finally {
       if (mounted) {
         setState(() => _sending = false);
@@ -135,14 +136,14 @@ class _AdminSupportThreadScreenState extends State<AdminSupportThreadScreen> {
           appBar: AppBar(
             backgroundColor: widget.accentColor,
             foregroundColor: Colors.white,
-            title: const Text(
-              'สนทนากับแอดมิน',
-              style: TextStyle(fontWeight: FontWeight.w800),
+            title: Text(
+              L10n.adminSupportThreadTitle,
+              style: const TextStyle(fontWeight: FontWeight.w800),
             ),
             actions: <Widget>[
               if (!contactClosed)
                 IconButton(
-                  tooltip: 'โทรแอดมิน (ในแอป)',
+                  tooltip: L10n.adminSupportCallAdminTooltip,
                   onPressed: () => AdminSupportCallLauncher.startVoiceCallToAdmin(
                     context: context,
                     assignedAdminUid: _assignedAdminUid,
@@ -185,7 +186,7 @@ class _AdminSupportThreadScreenState extends State<AdminSupportThreadScreen> {
       return const Center(child: CircularProgressIndicator());
     }
     if (ticket == null) {
-      return const Center(child: Text('ไม่พบข้อความ'));
+      return Center(child: Text(L10n.adminSupportTicketNotFound));
     }
 
     return StreamBuilder<List<AdminSupportMessage>>(
@@ -207,7 +208,7 @@ class _AdminSupportThreadScreenState extends State<AdminSupportThreadScreen> {
             const SizedBox(height: 12),
             _MessageBubble(
               isMine: true,
-              senderName: ticket.requesterName ?? 'คุณ',
+              senderName: ticket.requesterName ?? L10n.you,
               message: ticket.message,
               imageUrls: ticket.imageUrls,
               createdAt: ticket.createdAt,
@@ -218,7 +219,7 @@ class _AdminSupportThreadScreenState extends State<AdminSupportThreadScreen> {
                 padding: const EdgeInsets.only(top: 10),
                 child: _MessageBubble(
                   isMine: !item.isAdmin,
-                  senderName: item.isAdmin ? 'แอดมิน' : item.senderName,
+                  senderName: item.isAdmin ? L10n.admin : item.senderName,
                   message: item.message,
                   imageUrls: item.imageUrls,
                   createdAt: item.createdAt,
@@ -245,7 +246,7 @@ class _ClosedContactBanner extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
           child: Text(
-            'เรื่องนี้ปิดแล้ว — ดูประวัติการสนทนาได้อย่างเดียว',
+            L10n.adminSupportTicketClosedReadOnly,
             textAlign: TextAlign.center,
             style: TextStyle(
               color: Colors.grey.shade700,
@@ -287,22 +288,12 @@ class _ThreadHeader extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            'สถานะ: ${_statusLabel(ticket.status)}',
+            L10n.statusWithValue(L10n.adminSupportStatusLabel(ticket.status)),
             style: TextStyle(color: accentColor, fontWeight: FontWeight.w700),
           ),
         ],
       ),
     );
-  }
-
-  String _statusLabel(String status) {
-    return switch (status) {
-      'open' => 'รอแอดมินตอบ',
-      'in_progress' => 'กำลังติดตาม',
-      'resolved' => 'แก้ไขแล้ว',
-      'closed' => 'ปิดเรื่อง',
-      _ => status,
-    };
   }
 }
 
@@ -459,9 +450,9 @@ class _Composer extends StatelessWidget {
                       maxLines: 4,
                       minLines: 1,
                       maxLength: AdminSupportService.maxMessageLength,
-                      decoration: const InputDecoration(
-                        hintText: 'พิมพ์ข้อความถึงแอดมิน...',
-                        border: OutlineInputBorder(),
+                      decoration: InputDecoration(
+                        hintText: L10n.adminSupportMessageHint,
+                        border: const OutlineInputBorder(),
                         counterText: '',
                       ),
                     ),

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../services/rider_alert_permissions.dart';
 
 /// Banner prompting riders to enable full-screen and overlay permissions for order alerts.
@@ -53,10 +54,10 @@ class _RiderAlertPermissionBannerState extends State<RiderAlertPermissionBanner>
 
     final messages = <String>[];
     if (status.needsFullScreenIntent) {
-      messages.add('เปิด “แจ้งเตือนเต็มจอ” เพื่อให้ออเดอร์เด้งบนหน้าจอล็อก');
+      messages.add(L10n.alertFullScreenNeeded);
     }
     if (status.needsOverlay) {
-      messages.add('เปิด “แสดงทับแอปอื่น” เพื่อให้เห็นออเดอร์ทุกหน้าจอ');
+      messages.add(L10n.alertOverlayNeeded);
     }
 
     return Padding(
@@ -74,9 +75,9 @@ class _RiderAlertPermissionBannerState extends State<RiderAlertPermissionBanner>
                 children: <Widget>[
                   const Icon(Icons.warning_amber_rounded, color: Color(0xFFEA580C)),
                   const SizedBox(width: 8),
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      'ตั้งค่าแจ้งเตือนออเดอร์',
+                      L10n.orderAlertSettingsTitle,
                       style: TextStyle(
                         fontWeight: FontWeight.w800,
                         color: Color(0xFF9A3412),
@@ -109,7 +110,7 @@ class _RiderAlertPermissionBannerState extends State<RiderAlertPermissionBanner>
                         await RiderAlertPermissions.openFullScreenIntentSettings();
                         await _refresh();
                       },
-                      child: const Text('เปิดแจ้งเตือนเต็มจอ'),
+                      child: Text(L10n.alertEnableFullScreen),
                     ),
                   if (status.needsOverlay)
                     OutlinedButton(
@@ -117,11 +118,11 @@ class _RiderAlertPermissionBannerState extends State<RiderAlertPermissionBanner>
                         await RiderAlertPermissions.openOverlaySettings();
                         await _refresh();
                       },
-                      child: const Text('เปิดแสดงทับแอป'),
+                      child: Text(L10n.alertEnableOverlay),
                     ),
                   TextButton(
                     onPressed: _refresh,
-                    child: const Text('ตรวจสอบอีกครั้ง'),
+                    child: Text(L10n.alertRecheck),
                   ),
                 ],
               ),

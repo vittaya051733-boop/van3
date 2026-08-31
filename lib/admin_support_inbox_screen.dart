@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'admin_contact_screen.dart';
 import 'admin_support_thread_screen.dart';
+import 'l10n/l10n.dart';
 import 'services/admin_support_config.dart';
 import 'services/admin_support_service.dart';
 
@@ -23,13 +24,13 @@ class AdminSupportInboxScreen extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: accentColor,
         foregroundColor: Colors.white,
-        title: const Text(
-          'ข้อความถึงแอดมิน',
-          style: TextStyle(fontWeight: FontWeight.w800),
+        title: Text(
+          L10n.adminSupportInboxTitle,
+          style: const TextStyle(fontWeight: FontWeight.w800),
         ),
         actions: <Widget>[
           IconButton(
-            tooltip: 'ส่งข้อความใหม่',
+            tooltip: L10n.adminSupportNewMessageTooltip,
             onPressed: () {
               Navigator.of(context).push(
                 MaterialPageRoute<void>(
@@ -58,10 +59,10 @@ class AdminSupportInboxScreen extends StatelessWidget {
           );
         },
         icon: const Icon(Icons.support_agent_rounded),
-        label: const Text('ติดต่อใหม่'),
+        label: Text(L10n.adminSupportContactNew),
       ),
       body: user == null
-          ? const Center(child: Text('กรุณาเข้าสู่ระบบ'))
+          ? Center(child: Text(L10n.signInRequired))
           : StreamBuilder<List<AdminSupportTicketSummary>>(
               stream: AdminSupportService.streamMyTickets(user.uid),
               builder: (context, snapshot) {
@@ -73,7 +74,10 @@ class AdminSupportInboxScreen extends StatelessWidget {
                   return Center(
                     child: Padding(
                       padding: const EdgeInsets.all(24),
-                      child: Text('โหลดไม่สำเร็จ\n${snapshot.error}'),
+                      child: Text(
+                        L10n.loadFailedWithError(snapshot.error!),
+                        textAlign: TextAlign.center,
+                      ),
                     ),
                   );
                 }
@@ -92,18 +96,18 @@ class AdminSupportInboxScreen extends StatelessWidget {
                             color: accentColor.withValues(alpha: 0.7),
                           ),
                           const SizedBox(height: 12),
-                          const Text(
-                            'ยังไม่มีข้อความ',
-                            style: TextStyle(
+                          Text(
+                            L10n.adminSupportEmpty,
+                            style: const TextStyle(
                               fontWeight: FontWeight.w800,
                               fontSize: 16,
                             ),
                           ),
                           const SizedBox(height: 6),
-                          const Text(
-                            'กดปุ่มด้านล่างเพื่อส่งคำถามถึงแอดมิน',
+                          Text(
+                            L10n.adminSupportEmptyHint,
                             textAlign: TextAlign.center,
-                            style: TextStyle(color: Color(0xFF64748B)),
+                            style: const TextStyle(color: Color(0xFF64748B)),
                           ),
                         ],
                       ),
@@ -204,7 +208,7 @@ class _TicketTile extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      _statusLabel(ticket.status),
+                      L10n.adminSupportStatusLabel(ticket.status),
                       style: TextStyle(
                         color: accentColor,
                         fontSize: 12,
@@ -220,15 +224,5 @@ class _TicketTile extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  String _statusLabel(String status) {
-    return switch (status) {
-      'open' => 'รอแอดมินตอบ',
-      'in_progress' => 'กำลังติดตาม',
-      'resolved' => 'แก้ไขแล้ว',
-      'closed' => 'ปิดเรื่อง',
-      _ => status,
-    };
   }
 }

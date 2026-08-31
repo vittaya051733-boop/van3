@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
@@ -10,9 +9,11 @@ import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../l10n/l10n.dart';
 import '../driver_scanner_screen.dart';
 import '../utils/order_pay_at_destination.dart';
 import '../utils/shop_location_resolver.dart';
+import '../utils/guarded_functions.dart';
 import '../utils/upload_image_compressor.dart';
 import 'rider_location_pusher.dart';
 
@@ -86,7 +87,7 @@ class RiderOrderActions {
     if (currentUid == null || currentUid.isEmpty) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('กรุณาเข้าสู่ระบบใหม่')),
+          SnackBar(content: Text(L10n.signInRequiredAgain)),
         );
       }
       return false;
@@ -96,11 +97,7 @@ class RiderOrderActions {
     if (status != 'delivering') {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'ต้องเป็นสถานะกำลังส่งก่อน จึงจะถ่ายรูปยืนยันการส่งได้',
-            ),
-          ),
+          SnackBar(content: Text(L10n.mustBeDeliveringForPhoto)),
         );
       }
       return false;
@@ -129,7 +126,7 @@ class RiderOrderActions {
         context: context,
         builder: (dialogContext) {
           return AlertDialog(
-            title: const Text('ยืนยันรูปส่งสำเร็จ'),
+            title: Text(L10n.confirmDeliveryPhotoTitle),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -144,19 +141,17 @@ class RiderOrderActions {
                   ),
                 ),
                 const SizedBox(height: 12),
-                const Text(
-                  'ตรวจสอบรูปก่อนยืนยัน ระบบจะอัปเดตออเดอร์เป็นส่งสำเร็จทันที',
-                ),
+                Text(L10n.confirmDeliveryPhotoBody),
               ],
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(dialogContext).pop(false),
-                child: const Text('ยกเลิก'),
+                child: Text(L10n.cancel),
               ),
               FilledButton(
                 onPressed: () => Navigator.of(dialogContext).pop(true),
-                child: const Text('ยืนยันส่งสำเร็จ'),
+                child: Text(L10n.confirmDelivered),
               ),
             ],
           );
@@ -166,7 +161,6 @@ class RiderOrderActions {
         return false;
       }
 
-      final grossShippingFee = await resolveShippingFee(orderData);
       final storagePath =
           'riders/$currentUid/delivery_proofs/$orderId/${DateTime.now().millisecondsSinceEpoch}_${compressed.fileName}';
       final storageRef = FirebaseStorage.instance.ref().child(storagePath);
@@ -181,16 +175,16 @@ class RiderOrderActions {
         (orderData['riderName'] as String?)?.trim(),
       );
 
-      await FirebaseFunctions.instanceFor(region: 'asia-southeast1')
-          .httpsCallable('completeRiderDelivery')
-          .call(<String, dynamic>{
-        'orderId': orderId,
-        'completedSource': 'photo_proof',
-        'grossShippingFee': grossShippingFee,
-        'deliveryProofImageUrl': proofUrl,
-        'deliveryProofStoragePath': storagePath,
-        'deliveryProofCapturedByName': capturedByName,
-      });
+      await GuardedFunctions.call(
+        'completeRiderDelivery',
+        parameters: <String, dynamic>{
+          'orderId': orderId,
+          'completedSource': 'photo_proof',
+          'deliveryProofImageUrl': proofUrl,
+          'deliveryProofStoragePath': storagePath,
+          'deliveryProofCapturedByName': capturedByName,
+        },
+      );
 
       unawaited(
         RiderLocationPusher.pushOnce(
@@ -204,8 +198,8 @@ class RiderOrderActions {
           SnackBar(
             content: Text(
               isPayAtDestinationOrder(orderData)
-                  ? 'บันทึกรูปยืนยันแล้ว — รอปล่อยเครดิตตามเวลาที่แอดมินกำหนด'
-                  : 'บันทึกรูปยืนยันและอัปเดตสถานะส่งสำเร็จแล้ว',
+                  ? L10n.photoProofSavedPendingRelease
+                  : L10n.photoProofSavedDelivered,
             ),
           ),
         );
@@ -217,8 +211,8 @@ class RiderOrderActions {
             error is FirebaseException &&
                 error.plugin == 'firebase_storage' &&
                 error.code == 'unauthorized'
-            ? 'Firebase บล็อกการอัปโหลดรูป กรุณาลองใหม่อีกครั้ง'
-            : 'บันทึกรูปยืนยันไม่สำเร็จ: $error';
+            ? L10n.uploadBlockedRetry
+            : L10n.saveDeliveryProofFailed(error);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(message)),
         );
@@ -240,8 +234,7 @@ class RiderOrderActions {
       nextStatus: 'ready',
       pickupArrived: true,
       locationSource: 'travel_pickup_arrived',
-      successMessage:
-          'บันทึกถึงจุดรับแล้ว — กด "เริ่มเดินทาง" เมื่อผู้โดยสารขึ้นรถ',
+      successMessage: L10n.arrivedPickupStartTripHint,
     );
   }
 
@@ -258,8 +251,7 @@ class RiderOrderActions {
       nextStatus: 'delivering',
       startDelivery: true,
       locationSource: 'travel_trip_started',
-      successMessage:
-          'เริ่มเดินทางแล้ว — กด "ถึงจุดหมายปลายทาง" เมื่อส่งผู้โดยสารถึงที่หมาย',
+      successMessage: L10n.tripStartedArriveHint,
     );
   }
 
@@ -273,7 +265,7 @@ class RiderOrderActions {
     if (currentUid == null || currentUid.isEmpty) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('กรุณาเข้าสู่ระบบใหม่')),
+          SnackBar(content: Text(L10n.signInRequiredAgain)),
         );
       }
       return false;
@@ -284,7 +276,7 @@ class RiderOrderActions {
     if (driverId != null && driverId.isNotEmpty && driverId != currentUid) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('ออเดอร์นี้ไม่ได้รับโดยคุณ')),
+          SnackBar(content: Text(L10n.orderNotYours)),
         );
       }
       return false;
@@ -293,7 +285,7 @@ class RiderOrderActions {
     if (status != 'delivering') {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('ไม่สามารถปิดงานได้ในสถานะ $status')),
+          SnackBar(content: Text(L10n.cannotCompleteInStatus(status))),
         );
       }
       return false;
@@ -305,14 +297,13 @@ class RiderOrderActions {
     }
 
     try {
-      final grossShippingFee = await resolveTravelFare(orderData);
-      await FirebaseFunctions.instanceFor(region: 'asia-southeast1')
-          .httpsCallable('completeRiderDelivery')
-          .call(<String, dynamic>{
-        'orderId': orderId,
-        'completedSource': 'travel_destination',
-        'grossShippingFee': grossShippingFee,
-      });
+      await GuardedFunctions.call(
+        'completeRiderDelivery',
+        parameters: <String, dynamic>{
+          'orderId': orderId,
+          'completedSource': 'travel_destination',
+        },
+      );
 
       unawaited(
         RiderLocationPusher.pushOnce(
@@ -327,8 +318,8 @@ class RiderOrderActions {
           SnackBar(
             content: Text(
               isCod
-                  ? 'ส่งผู้โดยสารถึงจุดหมายแล้ว — รอปล่อยเครดิตตามเวลาที่แอดมินกำหนด'
-                  : 'ส่งผู้โดยสารถึงจุดหมายแล้ว — รอระบบโอนค่าโดยสารหลังหัก GP ตามที่แอดมินกำหนด',
+                  ? L10n.passengerArrivedPendingRelease
+                  : L10n.passengerArrivedPendingPayout,
             ),
           ),
         );
@@ -337,7 +328,7 @@ class RiderOrderActions {
     } catch (error) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('ปิดงานไม่สำเร็จ: $error')),
+          SnackBar(content: Text(L10n.completeJobFailed(error))),
         );
       }
       return false;
@@ -359,7 +350,7 @@ class RiderOrderActions {
     if (currentUid == null || currentUid.isEmpty) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('กรุณาเข้าสู่ระบบใหม่')),
+          SnackBar(content: Text(L10n.signInRequiredAgain)),
         );
       }
       return false;
@@ -370,7 +361,7 @@ class RiderOrderActions {
     if (driverId != null && driverId.isNotEmpty && driverId != currentUid) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('ออเดอร์นี้ไม่ได้รับโดยคุณ')),
+          SnackBar(content: Text(L10n.orderNotYours)),
         );
       }
       return false;
@@ -379,7 +370,7 @@ class RiderOrderActions {
     if (status != expectedStatus) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('ไม่สามารถอัปเดตได้ในสถานะ $status')),
+          SnackBar(content: Text(L10n.cannotUpdateInStatus(status))),
         );
       }
       return false;
@@ -412,7 +403,7 @@ class RiderOrderActions {
     } catch (error) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('อัปเดตสถานะไม่สำเร็จ: $error')),
+          SnackBar(content: Text(L10n.updateStatusFailedWithError(error))),
         );
       }
       return false;
@@ -434,23 +425,20 @@ class RiderOrderActions {
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('ยืนยันถึงจุดหมายปลายทาง'),
+          title: Text(L10n.confirmDestinationArrivalTitle),
           content: Text(
             isCod
-                ? 'ยืนยันว่าส่งผู้โดยสารถึงปลายทางแล้ว\n'
-                    'การชำระ: จ่ายปลายทาง (รับเงินสด $fareLabel บาทจากลูกค้า)\n'
-                    'ค่าโดยสารสุทธิ (หลังหัก GP) จะเข้าเครดิตหลังครบเวลาที่แอดมินกำหนด'
-                : 'ยืนยันว่าส่งผู้โดยสารถึงปลายทางแล้ว\n'
-                    'ค่าโดยสาร $fareLabel บาท จะรอโอนให้หลังหัก GP ตามที่แอดมินกำหนด',
+                ? L10n.confirmDestinationArrivalCod(fareLabel)
+                : L10n.confirmDestinationArrival(fareLabel),
           ),
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('ยกเลิก'),
+              child: Text(L10n.cancel),
             ),
             FilledButton(
               onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('ยืนยันถึงปลายทาง'),
+              child: Text(L10n.confirmArrivedDestination),
             ),
           ],
         );

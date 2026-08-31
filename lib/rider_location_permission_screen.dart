@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 
+import 'l10n/l10n.dart';
+
 class RiderLocationPermissionScreen extends StatefulWidget {
   const RiderLocationPermissionScreen({super.key});
 
@@ -26,7 +28,7 @@ class _RiderLocationPermissionScreenState
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
         setState(() {
-          _error = 'กรุณาเปิด GPS/Location ของเครื่องก่อน';
+          _error = L10n.enableGpsFirst;
         });
         return;
       }
@@ -38,14 +40,14 @@ class _RiderLocationPermissionScreenState
 
       if (permission == LocationPermission.denied) {
         setState(() {
-          _error = 'ยังไม่ได้อนุญาตสิทธิ์ตำแหน่ง';
+          _error = L10n.locationPermissionDenied;
         });
         return;
       }
 
       if (permission == LocationPermission.deniedForever) {
         setState(() {
-          _error = 'สิทธิ์ตำแหน่งถูกปิดถาวร กรุณาเปิดในตั้งค่าแอป';
+          _error = L10n.locationPermissionDeniedForever;
         });
         return;
       }
@@ -73,7 +75,7 @@ class _RiderLocationPermissionScreenState
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('สิทธิ์การเข้าถึงพิกัด'),
+        title: Text(L10n.locationPermissionTitle),
       ),
       body: Padding(
         padding: const EdgeInsets.all(20),
@@ -82,14 +84,14 @@ class _RiderLocationPermissionScreenState
           children: [
             const Icon(Icons.location_on_rounded, size: 46, color: Color(0xFFFF7A00)),
             const SizedBox(height: 12),
-            const Text(
-              'ก่อนเปิดพร้อมรับงาน',
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+            Text(
+              L10n.locationPermissionBeforeReady,
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'ระบบต้องใช้พิกัดปัจจุบันของไรเดอร์ เพื่อจับคู่งานได้ถูกต้อง',
-              style: TextStyle(fontSize: 15, color: Color(0xFF4B5563)),
+            Text(
+              L10n.locationPermissionBody,
+              style: const TextStyle(fontSize: 15, color: Color(0xFF4B5563)),
             ),
             const SizedBox(height: 18),
             Container(
@@ -100,9 +102,9 @@ class _RiderLocationPermissionScreenState
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(color: const Color(0xFFFFC89A)),
               ),
-              child: const Text(
-                'หากใช้ Emulator ให้ตั้ง Mock Location เป็นพิกัดจริงของพื้นที่ทดสอบก่อน',
-                style: TextStyle(fontSize: 13, color: Color(0xFF9A3412)),
+              child: Text(
+                L10n.locationEmulatorHint,
+                style: const TextStyle(fontSize: 13, color: Color(0xFF9A3412)),
               ),
             ),
             if (_error != null) ...[
@@ -118,14 +120,14 @@ class _RiderLocationPermissionScreenState
                 Expanded(
                   child: OutlinedButton(
                     onPressed: _openLocationSettings,
-                    child: const Text('เปิด GPS'),
+                    child: Text(L10n.enableGps),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: OutlinedButton(
                     onPressed: _openAppSettings,
-                    child: const Text('ตั้งค่าแอป'),
+                    child: Text(L10n.openAppSettings),
                   ),
                 ),
               ],
@@ -142,7 +144,7 @@ class _RiderLocationPermissionScreenState
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.check_circle_outline_rounded),
-                label: const Text('อนุญาตและไปต่อ'),
+                label: Text(L10n.allowAndContinue),
               ),
             ),
           ],

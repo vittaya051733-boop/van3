@@ -4,11 +4,15 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'utils/app_colors.dart';
 import 'admin_contact_screen.dart';
 import 'admin_support_inbox_screen.dart';
+import 'l10n/l10n.dart';
 import 'privacy_security_screen.dart';
 import 'rider_profile_edit_screen.dart';
 import 'rider_reviews_screen.dart';
 import 'services/admin_support_config.dart';
+import 'services/biometric_auth_service.dart';
+import 'services/locale_service.dart';
 import 'services/rider_registration_service.dart';
+import 'services/security_pin_service.dart';
 
 class RiderSettingsScreen extends StatefulWidget {
   const RiderSettingsScreen({super.key});
@@ -19,13 +23,123 @@ class RiderSettingsScreen extends StatefulWidget {
 
 class _RiderSettingsScreenState extends State<RiderSettingsScreen> {
   int _profileRefreshToken = 0;
+  final _biometricAuthService = BiometricAuthService();
+  bool _biometricAvailable = false;
+  bool _biometricEnabled = false;
+  bool _biometricLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBiometricSettings();
+  }
+
+  Future<void> _loadBiometricSettings() async {
+    final available = await _biometricAuthService.canUseBiometrics();
+    final enabled = await SecurityPinService.instance.isBiometricUnlockEnabled();
+    if (!mounted) return;
+    setState(() {
+      _biometricAvailable = available;
+      _biometricEnabled = enabled;
+      _biometricLoading = false;
+    });
+  }
+
+  Future<void> _toggleBiometricUnlock(bool value) async {
+    if (_biometricLoading) return;
+    if (value && !_biometricAvailable) {
+      _snack(context, L10n.biometricNotAvailable);
+      return;
+    }
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (value && uid != null) {
+      final hasPin = await SecurityPinService.instance.hasPin(uid);
+      if (!mounted) return;
+      if (!hasPin) {
+        _snack(context, L10n.setPinBeforeBiometric);
+        return;
+      }
+    }
+    setState(() => _biometricLoading = true);
+    try {
+      if (value) {
+        final ok = await _biometricAuthService.authenticate(
+          reason: L10n.biometricVerifyForUnlock,
+        );
+        if (!mounted) return;
+        if (!ok) {
+          _snack(context, L10n.biometricVerifyFailed);
+          return;
+        }
+      }
+      await SecurityPinService.instance.setBiometricUnlockEnabled(value);
+      if (!mounted) return;
+      setState(() => _biometricEnabled = value);
+      _snack(
+        context,
+        value ? L10n.biometricUnlockEnabled : L10n.biometricUnlockDisabled,
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _biometricLoading = false);
+      }
+    }
+  }
+
+  Future<void> _pickLanguage() async {
+    final service = LocaleService.instance;
+    final selected = await showModalBottomSheet<Locale>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                child: Text(
+                  L10n.chooseLanguage,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              ListTile(
+                title: Text(L10n.languageThai),
+                trailing: service.locale == LocaleService.thai
+                    ? const Icon(Icons.check_rounded)
+                    : null,
+                onTap: () => Navigator.of(context).pop(LocaleService.thai),
+              ),
+              ListTile(
+                title: Text(L10n.languageEnglish),
+                trailing: service.locale == LocaleService.english
+                    ? const Icon(Icons.check_rounded)
+                    : null,
+                onTap: () => Navigator.of(context).pop(LocaleService.english),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (selected != null) {
+      await service.setLocale(selected);
+      if (mounted) {
+        setState(() {});
+      }
+    }
+  }
 
   String _displayName(User? user) {
     final name = user?.displayName?.trim();
     if (name != null && name.isNotEmpty) return name;
     final email = user?.email?.trim();
     if (email != null && email.isNotEmpty) return email;
-    return 'ผู้ใช้';
+    return L10n.defaultUser;
   }
 
   String? _secondaryText(User? user) {
@@ -93,15 +207,18 @@ class _RiderSettingsScreenState extends State<RiderSettingsScreen> {
     final user = FirebaseAuth.instance.currentUser;
     final name = _displayName(user);
     final secondary = _secondaryText(user);
+    final localeLabel = LocaleService.instance.labelFor(
+      LocaleService.instance.locale,
+    );
 
     return Scaffold(
       appBar: AppBar(
         backgroundColor: AppColors.accent,
         foregroundColor: Colors.white,
         elevation: 0,
-        title: const Text(
-          'ตั้งค่า',
-          style: TextStyle(fontWeight: FontWeight.w800),
+        title: Text(
+          L10n.settingsTitle,
+          style: const TextStyle(fontWeight: FontWeight.w800),
         ),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(74),
@@ -150,7 +267,7 @@ class _RiderSettingsScreenState extends State<RiderSettingsScreen> {
       ),
       body: ListView(
         children: [
-          _sectionTitle('โปรไฟล์'),
+          _sectionTitle(L10n.profileSection),
           FutureBuilder<RiderProfileData>(
             key: ValueKey<int>(_profileRefreshToken),
             future: user == null
@@ -158,18 +275,23 @@ class _RiderSettingsScreenState extends State<RiderSettingsScreen> {
                 : RiderRegistrationService.fetchProfile(user.uid),
             builder: (context, snapshot) {
               final complete = snapshot.data?.isCompleteForCustomerTravel == true;
+              final promptPayReady = snapshot.data?.hasPromptPayForPayout == true;
+              final needsAttention = !complete || !promptPayReady;
               return ListTile(
                 leading: const Icon(Icons.badge_outlined),
-                title: const Text('แก้ไขโปรไฟล์ไรเดอร์'),
+                title: Text(L10n.editRiderProfile),
                 subtitle: Text(
-                  complete
-                      ? 'รูป ข้อมูลรถ เอกสาร และบัญชีธนาคาร'
-                      : 'ยังขาดข้อมูลที่ van2 ใช้ในหน้าเดินทาง — แตะเพื่อเติม',
+                  !promptPayReady
+                      ? L10n.noPromptPayForWithdraw
+                      : complete
+                      ? L10n.profileCompleteHint
+                      : L10n.profileIncompleteVan2HintShort,
                 ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
-                    if (!complete && snapshot.connectionState == ConnectionState.done)
+                    if (needsAttention &&
+                        snapshot.connectionState == ConnectionState.done)
                       Container(
                         margin: const EdgeInsets.only(right: 4),
                         padding: const EdgeInsets.symmetric(
@@ -180,9 +302,11 @@ class _RiderSettingsScreenState extends State<RiderSettingsScreen> {
                           color: const Color(0xFFFFF7ED),
                           borderRadius: BorderRadius.circular(99),
                         ),
-                        child: const Text(
-                          'ไม่ครบ',
-                          style: TextStyle(
+                        child: Text(
+                          !promptPayReady
+                              ? L10n.noPromptPayBadge
+                              : L10n.incompleteBadge,
+                          style: const TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w800,
                             color: Color(0xFFEA580C),
@@ -206,13 +330,11 @@ class _RiderSettingsScreenState extends State<RiderSettingsScreen> {
             },
           ),
           const Divider(height: 1),
-          _sectionTitle('รีวิว'),
+          _sectionTitle(L10n.reviewsSection),
           ListTile(
             leading: const Icon(Icons.star_rate_rounded),
-            title: const Text('รีวิวจากลูกค้า'),
-            subtitle: const Text(
-              'อ่านอย่างเดียว — ลูกค้าเป็นผู้ให้คะแนนและแก้ไขรีวิวเอง',
-            ),
+            title: Text(L10n.customerReviews),
+            subtitle: Text(L10n.customerReviewsHint),
             trailing: const Icon(Icons.chevron_right_rounded),
             onTap: () {
               Navigator.of(context).push(
@@ -223,11 +345,11 @@ class _RiderSettingsScreenState extends State<RiderSettingsScreen> {
             },
           ),
           const Divider(height: 1),
-          _sectionTitle('ความเป็นส่วนตัว'),
+          _sectionTitle(L10n.privacySection),
           ListTile(
             leading: const Icon(Icons.shield_outlined),
-            title: const Text('ความเป็นส่วนตัวและความปลอดภัย'),
-            subtitle: const Text('ความยินยอม สิทธิข้อมูล และการแจ้งเตือน'),
+            title: Text(L10n.privacyAndSecurity),
+            subtitle: Text(L10n.privacyAndSecuritySubtitle),
             trailing: const Icon(Icons.chevron_right_rounded),
             onTap: () {
               Navigator.of(context).push(
@@ -238,21 +360,36 @@ class _RiderSettingsScreenState extends State<RiderSettingsScreen> {
             },
           ),
           const Divider(height: 1),
-          _sectionTitle('ช่วยเหลือ'),
+          _sectionTitle(L10n.securitySection),
+          SwitchListTile(
+            secondary: const Icon(Icons.fingerprint),
+            title: Text(L10n.biometricUnlock),
+            subtitle: Text(
+              _biometricLoading
+                  ? L10n.checkingBiometric
+                  : _biometricAvailable
+                  ? L10n.biometricUnlockHint
+                  : L10n.biometricNotAvailable,
+            ),
+            value: _biometricAvailable && _biometricEnabled,
+            onChanged: _biometricLoading ? null : _toggleBiometricUnlock,
+          ),
+          const Divider(height: 1),
+          _sectionTitle(L10n.helpSection),
           ListTile(
             leading: const Icon(Icons.help_outline_rounded),
-            title: const Text('ศูนย์ช่วยเหลือ'),
+            title: Text(L10n.helpCenter),
             trailing: const Icon(Icons.chevron_right_rounded),
-            onTap: () => _snack(context, 'ศูนย์ช่วยเหลือ (กำลังเตรียม)'),
+            onTap: () => _snack(context, L10n.helpCenterPreparing),
           ),
           ListTile(
             leading: const Icon(Icons.support_agent_rounded),
-            title: const Text('ติดต่อแอดมิน'),
+            title: Text(L10n.contactAdmin),
             trailing: const Icon(Icons.chevron_right_rounded),
             onTap: () {
               Navigator.of(context).push(
                 MaterialPageRoute<void>(
-                  builder: (_) => const AdminContactScreen(
+                  builder: (_) => AdminContactScreen(
                     config: kVan3AdminSupportConfig,
                   ),
                 ),
@@ -261,13 +398,13 @@ class _RiderSettingsScreenState extends State<RiderSettingsScreen> {
           ),
           ListTile(
             leading: const Icon(Icons.mark_chat_unread_outlined),
-            title: const Text('ข้อความถึงแอดมิน'),
-            subtitle: const Text('ดูคำตอบจากแอดมินและตอบกลับ'),
+            title: Text(L10n.adminMessages),
+            subtitle: Text(L10n.adminMessagesSubtitle),
             trailing: const Icon(Icons.chevron_right_rounded),
             onTap: () {
               Navigator.of(context).push(
                 MaterialPageRoute<void>(
-                  builder: (_) => const AdminSupportInboxScreen(
+                  builder: (_) => AdminSupportInboxScreen(
                     config: kVan3AdminSupportConfig,
                     accentColor: Color(0xFF059669),
                   ),
@@ -276,22 +413,13 @@ class _RiderSettingsScreenState extends State<RiderSettingsScreen> {
             },
           ),
           const Divider(height: 1),
-          _sectionTitle('ความปลอดภัย'),
-          ListTile(
-            leading: const Icon(Icons.shield_outlined),
-            title: const Text('ความเป็นส่วนตัวและความปลอดภัย'),
-            trailing: const Icon(Icons.chevron_right_rounded),
-            onTap: () =>
-                _snack(context, 'ความปลอดภัย (กำลังเตรียม)'),
-          ),
-          const Divider(height: 1),
-          _sectionTitle('ตั้งค่าภาษา'),
+          _sectionTitle(L10n.languageSection),
           ListTile(
             leading: const Icon(Icons.language_rounded),
-            title: const Text('ภาษา'),
-            subtitle: const Text('ไทย'),
+            title: Text(L10n.language),
+            subtitle: Text(localeLabel),
             trailing: const Icon(Icons.chevron_right_rounded),
-            onTap: () => _snack(context, 'ตั้งค่าภาษา (กำลังเตรียม)'),
+            onTap: _pickLanguage,
           ),
         ],
       ),

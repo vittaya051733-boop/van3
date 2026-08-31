@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
+import 'utils/guarded_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -12,9 +12,21 @@ import 'rider_jobs_screen.dart';
 import 'rider_settings_screen.dart';
 import 'wallet_screen.dart';
 import 'services/rider_orders_service.dart';
+import 'services/ecosystem_heartbeat_service.dart';
+import 'services/locale_service.dart';
 import 'utils/order_pay_at_destination.dart';
+import 'l10n/l10n.dart';
 import 'widgets/cached_app_image.dart';
 import 'widgets/rider_alert_permission_banner.dart';
+
+enum DashboardActionId {
+  newOrders,
+  orderHistory,
+  wallet,
+  todayIncome,
+  notifications,
+  settings,
+}
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -23,7 +35,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   static const int _maxFreshPositionAgeSeconds = 45;
   /// Keep rider docs fresh for van2 checkout (RIDER_FRESH_LOCATION_MINUTES = 10).
   static const Duration _locationHeartbeatInterval = Duration(minutes: 3);
@@ -66,69 +78,71 @@ class _HomeScreenState extends State<HomeScreen> {
     return LocationSettings(accuracy: accuracy, distanceFilter: distanceFilter);
   }
 
-  static const List<_DashboardAction> _actions = [
+  static final List<_DashboardAction> _actions = [
     _DashboardAction(
-      title: 'ออเดอร์ใหม่',
-      subtitle: 'ดูงานที่รอรับ',
+      id: DashboardActionId.newOrders,
       icon: Icons.assignment_turned_in_rounded,
       color: Color(0xFFFF8A00),
     ),
     _DashboardAction(
-      title: 'ประวัติ ออเดอร์',
-      subtitle: 'กำลังจัดส่ง',
+      id: DashboardActionId.orderHistory,
       icon: Icons.receipt_long_rounded,
       color: Color(0xFFFF6B00),
     ),
     _DashboardAction(
-      title: 'กระเป๋าเงิน',
-      subtitle: 'ยอดคงเหลือ',
+      id: DashboardActionId.wallet,
       icon: Icons.account_balance_wallet_rounded,
       color: Color(0xFFFFA940),
     ),
     _DashboardAction(
-      title: 'รายได้วันนี้',
-      subtitle: 'สรุปรายวัน',
+      id: DashboardActionId.todayIncome,
       icon: Icons.query_stats_rounded,
       color: Color(0xFFE66A00),
     ),
     _DashboardAction(
-      title: 'การแจ้งเตือน',
-      subtitle: 'อัปเดตงานล่าสุด',
+      id: DashboardActionId.notifications,
       icon: Icons.notifications_active_rounded,
       color: Color(0xFFFF7F11),
     ),
     _DashboardAction(
-      title: 'ตั้งค่า',
-      subtitle: 'โปรไฟล์และระบบ',
+      id: DashboardActionId.settings,
       icon: Icons.settings_rounded,
       color: Color(0xFFFF9340),
     ),
   ];
 
-  static const Set<String> _bottomBarActionTitles = <String>{
-    'กระเป๋าเงิน',
-    'รายได้วันนี้',
-    'การแจ้งเตือน',
-    'ตั้งค่า',
-  };
-
   static final List<_DashboardAction> _dashboardActions = _actions
-      .where((action) => !_bottomBarActionTitles.contains(action.title))
+      .where((action) => !action.isBottomBarAction)
       .toList(growable: false);
 
   static final List<_DashboardAction> _bottomBarActions = _actions
-      .where((action) => _bottomBarActionTitles.contains(action.title))
+      .where((action) => action.isBottomBarAction)
       .toList(growable: false);
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _ensureLocationReadyOnEntry();
     _loadReadyStatuses();
+    EcosystemHeartbeatService.instance.start();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Keep heartbeat while backgrounded so van4 health stays green when
+    // switching apps on the same device. Stop only when process is gone.
+    if (state == AppLifecycleState.resumed) {
+      EcosystemHeartbeatService.instance.start();
+    } else if (state == AppLifecycleState.detached) {
+      EcosystemHeartbeatService.instance.stop();
+    }
   }
 
   @override
   void dispose() {
+    EcosystemHeartbeatService.instance.stop();
+    WidgetsBinding.instance.removeObserver(this);
     _positionSubscription?.cancel();
     _locationHeartbeatTimer?.cancel();
     _riderDocSubscription?.cancel();
@@ -333,18 +347,18 @@ class _HomeScreenState extends State<HomeScreen> {
       barrierDismissible: true,
       builder: (context) {
         return AlertDialog(
-          title: const Text('เปิดการใช้งานตำแหน่ง'),
+          title: Text(L10n.enableLocationTitle),
           content: Text(
             deniedForever
-                ? 'กรุณาเปิดสิทธิ์ตำแหน่งในตั้งค่าแอป เพื่อให้ระบบอัปเดตพิกัดไรเดอร์ได้'
+                ? L10n.locationPermissionAppSettings
                 : (needService
-                      ? 'กรุณาเปิด GPS/Location ของเครื่อง เพื่อให้ระบบดึงพิกัดได้'
-                      : 'กรุณาอนุญาตสิทธิ์ตำแหน่ง เพื่อให้ระบบดึงพิกัดได้'),
+                      ? L10n.locationPermissionEnableGps
+                      : L10n.locationPermissionRequest),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('ภายหลัง'),
+              child: Text(L10n.later),
             ),
             FilledButton(
               onPressed: () async {
@@ -359,7 +373,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   Navigator.of(context).pop();
                 }
               },
-              child: const Text('เปิดตอนนี้'),
+              child: Text(L10n.now),
             ),
           ],
         );
@@ -371,10 +385,10 @@ class _HomeScreenState extends State<HomeScreen> {
     await _setReadyMode(
       value: value,
       isPassengerMode: false,
-      enabledMessage: 'เปิดรับงานส่งของแล้ว',
+      enabledMessage: L10n.deliveryReadyEnabled,
       disabledMessage: _isPassengerReady
-          ? 'ปิดรับงานส่งของแล้ว แต่ยังเปิดรับผู้โดยสารอยู่'
-          : 'ปิดรับงานส่งของแล้ว',
+          ? L10n.deliveryReadyDisabledPassengerStillOn
+          : L10n.deliveryReadyDisabled,
     );
   }
 
@@ -382,10 +396,10 @@ class _HomeScreenState extends State<HomeScreen> {
     await _setReadyMode(
       value: value,
       isPassengerMode: true,
-      enabledMessage: 'เปิดรับงานผู้โดยสารแล้ว',
+      enabledMessage: L10n.passengerReadyEnabled,
       disabledMessage: _isOnlineReady
-          ? 'ปิดรับงานผู้โดยสารแล้ว แต่ยังเปิดรับส่งของอยู่'
-          : 'ปิดรับงานผู้โดยสารแล้ว',
+          ? L10n.passengerReadyDisabledDeliveryStillOn
+          : L10n.passengerReadyDisabled,
     );
   }
 
@@ -397,7 +411,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      _showSnack('ไม่พบผู้ใช้ กรุณาเข้าสู่ระบบใหม่');
+      _showSnack(L10n.signInRequiredAgain);
       return;
     }
 
@@ -413,7 +427,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (value) {
         final ok = await _ensureGpsReadyForToggle();
         if (!ok) {
-          _showSnack('กรุณาเปิด GPS และอนุญาตสิทธิ์ตำแหน่งก่อนเปิดรับงาน');
+          _showSnack(L10n.enableGpsBeforeReady);
           return;
         }
       }
@@ -496,7 +510,7 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       } catch (e, st) {
         debugPrint('[van3:ready-toggle] WRITE FAILED: $e\n$st');
-        _showSnack('บันทึกสถานะลง Firestore ไม่สำเร็จ: $e');
+        _showSnack(L10n.firestoreReadySaveFailed(e));
         return; // Do NOT update local UI state if the write failed.
       }
 
@@ -506,7 +520,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _isPassengerReady = targetPassengerReady;
       });
       if (value) {
-        _showSnack('$enabledMessage และบันทึกพิกัดลงระบบแล้ว');
+        _showSnack(L10n.readyEnabledWithLocation(enabledMessage));
       } else {
         _showSnack(disabledMessage);
         // Best-effort release of pending orders the rider can no longer take.
@@ -523,16 +537,14 @@ class _HomeScreenState extends State<HomeScreen> {
           await _startRealtimeLocationUpdates(user.uid);
         } catch (_) {
           if (mounted) {
-            _showSnack(
-              'เปิดสถานะรับงานแล้ว แต่เริ่มอัปเดตพิกัดเรียลไทม์ไม่สำเร็จ',
-            );
+            _showSnack(L10n.readyEnabledLocationStreamFailed);
           }
         }
       } else {
         await _stopRealtimeLocationUpdates();
       }
     } catch (e) {
-      _showSnack('ไม่สามารถตั้งค่าออนไลน์ได้: $e');
+      _showSnack(L10n.setOnlineFailed(e));
     } finally {
       if (mounted) {
         setState(() {
@@ -634,11 +646,10 @@ class _HomeScreenState extends State<HomeScreen> {
     required bool isPassengerMode,
   }) async {
     try {
-      final result = await FirebaseFunctions.instanceFor(
-        region: 'asia-southeast1',
-      ).httpsCallable('releaseRiderOrdersOnOffline').call(<String, dynamic>{
-        'isPassengerMode': isPassengerMode,
-      });
+      final result = await GuardedFunctions.call(
+        'releaseRiderOrdersOnOffline',
+        parameters: <String, dynamic>{'isPassengerMode': isPassengerMode},
+      );
       final data = result.data is Map
           ? Map<String, dynamic>.from(result.data as Map)
           : const <String, dynamic>{};
@@ -796,7 +807,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!_hasLoadedCreditBalance) {
       final ok = await _refreshCreditBalanceOnce();
       if (!ok || !_hasLoadedCreditBalance) {
-        _showSnack('ยังโหลดเครดิตไม่ได้ (ตรวจอินเทอร์เน็ต/Firestore)');
+        _showSnack(L10n.creditLoadFailed);
         return;
       }
     }
@@ -821,7 +832,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!_hasLoadedCreditBalance) {
       final ok = await _refreshCreditBalanceOnce();
       if (!ok || !_hasLoadedCreditBalance) {
-        _showSnack('ยังโหลดเครดิตไม่ได้ (ตรวจอินเทอร์เน็ต/Firestore)');
+        _showSnack(L10n.creditLoadFailed);
         return;
       }
     }
@@ -836,61 +847,34 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _onActionTap(BuildContext context, _DashboardAction action) {
-    if (action.title == 'ออเดอร์ใหม่') {
-      Navigator.of(context).push(
-        MaterialPageRoute<void>(builder: (_) => const RiderJobsScreen()),
-      );
-      return;
+    switch (action.id) {
+      case DashboardActionId.newOrders:
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(builder: (_) => const RiderJobsScreen()),
+        );
+      case DashboardActionId.orderHistory:
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => const RiderJobsScreen(showHistory: true),
+          ),
+        );
+      case DashboardActionId.todayIncome:
+        _showTodayIncomeSummarySheet(context);
+      case DashboardActionId.wallet:
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(builder: (_) => const WalletScreen()),
+        );
+      case DashboardActionId.notifications:
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => const RiderNotificationsScreen(),
+          ),
+        );
+      case DashboardActionId.settings:
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(builder: (_) => const RiderSettingsScreen()),
+        );
     }
-
-    if (action.title == 'ประวัติ ออเดอร์') {
-      Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => const RiderJobsScreen(showHistory: true),
-        ),
-      );
-      return;
-    }
-
-    if (action.title == 'รายได้วันนี้') {
-      _showTodayIncomeSummarySheet(context);
-      return;
-    }
-
-    if (action.title == 'กระเป๋าเงิน') {
-      Navigator.of(
-        context,
-      ).push(MaterialPageRoute<void>(builder: (_) => const WalletScreen()));
-      return;
-    }
-
-    if (action.title == 'การแจ้งเตือน') {
-      Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => const RiderNotificationsScreen(),
-        ),
-      );
-      return;
-    }
-
-    if (action.title == 'ตั้งค่า') {
-      Navigator.of(context).push(
-        MaterialPageRoute<void>(builder: (_) => const RiderSettingsScreen()),
-      );
-      return;
-    }
-
-    if (action.title == 'พร้อมรับงาน') {
-      _toggleOnlineReady();
-      return;
-    }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('เมนู "${action.title}" พร้อมแล้ว รอเชื่อมต่อระบบถัดไป'),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
   }
 
   void _showSnack(String message) {
@@ -901,9 +885,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _showCreditRequiredMessage() {
-    _showSnack(
-      'เครดิตต้องไม่ต่ำกว่า 500 บาท จึงจะเปิดรับงานได้ เพื่อป้องกันการส่งของให้ถึงมือลูกค้า',
-    );
+    _showSnack(L10n.creditMinimumRequired);
   }
 
   void _syncCreditBalance(double creditTotal) {
@@ -963,14 +945,12 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('เครดิตใกล้ถึงขั้นต่ำ'),
-          content: const Text(
-            'เครดิตของคุณใกล้ต่ำกว่า 500 บาท หากต่ำกว่า 500 บาท จะไม่สามารถเปิดรับงานได้ เพื่อป้องกันการส่งของให้ถึงมือลูกค้า',
-          ),
+          title: Text(L10n.creditNearMinimumTitle),
+          content: Text(L10n.creditNearMinimumBody),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('ปิด'),
+              child: Text(L10n.close),
             ),
           ],
         );
@@ -990,24 +970,24 @@ class _HomeScreenState extends State<HomeScreen> {
 
   String _creditLevelLabel(double creditTotal) {
     if (creditTotal >= _healthyCreditTarget) {
-      return 'ระดับ 4 พร้อมรับงาน';
+      return L10n.creditLevel4Ready;
     }
     if (creditTotal >= 2000) {
-      return 'ระดับ 3';
+      return L10n.creditLevel3;
     }
     if (creditTotal > 1000) {
-      return 'ระดับ 2';
+      return L10n.creditLevel2;
     }
     if (creditTotal >= _minimumReadyCredit) {
-      return 'ระดับ 1 ใกล้ขั้นต่ำ';
+      return L10n.creditLevel1NearMin;
     }
-    return 'ต่ำกว่าขั้นต่ำ';
+    return L10n.creditBelowMinimum;
   }
 
   Future<void> _showTodayIncomeSummarySheet(BuildContext context) async {
     final currentUid = FirebaseAuth.instance.currentUser?.uid;
     if (currentUid == null || currentUid.isEmpty) {
-      _showSnack('ไม่พบบัญชีที่ล็อกอิน');
+      _showSnack(L10n.noLoggedInAccount);
       return;
     }
 
@@ -1043,16 +1023,16 @@ class _HomeScreenState extends State<HomeScreen> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'รายได้วันนี้',
+                    Text(
+                      L10n.todayIncomeTitle,
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
                     const SizedBox(height: 6),
-                    const Text(
-                      'สรุปจากงานที่ส่งสำเร็จวันนี้และใช้ข้อมูลที่บันทึกตอนปิดงาน',
+                    Text(
+                      L10n.todayIncomeSubtitle,
                       style: TextStyle(
                         color: Color(0xFF6B7280),
                         fontSize: 13,
@@ -1070,8 +1050,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
-                            'รายได้สุทธิรวมวันนี้',
+                          Text(
+                            L10n.todayNetIncomeTotal,
                             style: TextStyle(
                               color: Color(0xFF9A3412),
                               fontSize: 13,
@@ -1106,7 +1086,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           const SizedBox(width: 10),
                           Text(
-                            'ส่งสำเร็จวันนี้ $deliveredTodayCount งาน',
+                            L10n.deliveredTodayCount(deliveredTodayCount),
                             style: const TextStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.w700,
@@ -1117,8 +1097,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                     const SizedBox(height: 16),
-                    const Text(
-                      'สรุป 7 วันล่าสุด',
+                    Text(
+                      L10n.last7DaysSummary,
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w800,
@@ -1134,8 +1114,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           color: const Color(0xFFF8FAFC),
                           borderRadius: BorderRadius.circular(18),
                         ),
-                        child: const Text(
-                          'ยังไม่มีข้อมูลรายได้ย้อนหลัง 7 วันล่าสุด',
+                        child: Text(
+                          L10n.noIncomeLast7Days,
                           style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w600,
@@ -1171,7 +1151,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
-                                        'ส่งสำเร็จ ${summary.deliveredCount} งาน',
+                                        L10n.deliveredCount(summary.deliveredCount),
                                         style: const TextStyle(
                                           fontSize: 12,
                                           fontWeight: FontWeight.w600,
@@ -1206,6 +1186,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: LocaleService.instance,
+      builder: (context, _) => _buildScaffold(context),
+    );
+  }
+
+  Widget _buildScaffold(BuildContext context) {
     final email = FirebaseAuth.instance.currentUser?.email ?? '-';
     final currentUid = FirebaseAuth.instance.currentUser?.uid;
     final dashboardActions = _dashboardActions;
@@ -1248,12 +1235,12 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                       const SizedBox(width: 12),
-                      const Expanded(
+                      Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Van3 Rider Dashboard',
+                              L10n.dashboardTitle,
                               style: TextStyle(
                                 color: Colors.white,
                                 fontSize: 21,
@@ -1262,7 +1249,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                             SizedBox(height: 2),
                             Text(
-                              'พร้อมลุยงานจัดส่งวันนี้',
+                              L10n.dashboardSubtitle,
                               style: TextStyle(
                                 color: Color(0xFFFFF0DF),
                                 fontSize: 13,
@@ -1299,7 +1286,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Row(
+                        Row(
                           children: [
                             Icon(
                               Icons.verified_user_rounded,
@@ -1307,7 +1294,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                             SizedBox(width: 8),
                             Text(
-                              'บัญชีที่ล็อกอิน',
+                              L10n.loggedInAccount,
                               style: TextStyle(
                                 color: Colors.white,
                                 fontSize: 14,
@@ -1376,8 +1363,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      const Text(
-                                        'รายได้ค่าส่งสุทธิของไรเดอร์วันนี้',
+                                      Text(
+                                        L10n.riderNetIncomeToday,
                                         style: TextStyle(
                                           color: Color(0xFFFFF0DF),
                                           fontSize: 12,
@@ -1394,8 +1381,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                         ),
                                       ),
                                       const SizedBox(height: 2),
-                                      const Text(
-                                        'ใช้ข้อมูลที่บันทึกตอนส่งสำเร็จ หัก 15%',
+                                      Text(
+                                        L10n.gpDeductionNote,
                                         style: TextStyle(
                                           color: Color(0xFFFFF0DF),
                                           fontSize: 11,
@@ -1467,8 +1454,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                                   crossAxisAlignment:
                                                       CrossAxisAlignment.start,
                                                   children: [
-                                                    const Text(
-                                                      'เครดิตไรเดอร์คงเหลือ',
+                                                    Text(
+                                                      L10n.riderCreditRemaining,
                                                       style: TextStyle(
                                                         color: Color(
                                                           0xFFFFF0DF,
@@ -1515,8 +1502,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                                   Icons.add_card_rounded,
                                                   size: 18,
                                                 ),
-                                                label: const Text(
-                                                  'เติมเครดิต',
+                                                label: Text(
+                                                  L10n.topUpCredit,
                                                   style: TextStyle(
                                                     fontSize: 12,
                                                     fontWeight: FontWeight.w800,
@@ -1578,8 +1565,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                           if (creditTotal <
                                               _minimumReadyCredit) ...[
                                             const SizedBox(height: 6),
-                                            const Text(
-                                              'เครดิตต่ำกว่า 500 บาท ปุ่มรับงานจะเปิดไม่ได้',
+                                            Text(
+                                              L10n.creditBelow500ToggleDisabled,
                                               style: TextStyle(
                                                 color: Colors.white,
                                                 fontSize: 11,
@@ -1596,13 +1583,19 @@ class _HomeScreenState extends State<HomeScreen> {
                                 Row(
                                   children: [
                                     _miniStat(
-                                      'งานที่รับแล้ว',
+                                      L10n.jobsAccepted,
                                       '$acceptedCount',
                                     ),
                                     const SizedBox(width: 10),
-                                    _miniStat('กำลังส่ง', '$deliveringCount'),
+                                    _miniStat(
+                                      L10n.jobsDelivering,
+                                      '$deliveringCount',
+                                    ),
                                     const SizedBox(width: 10),
-                                    _miniStat('ส่งสำเร็จ', '$deliveredCount'),
+                                    _miniStat(
+                                      L10n.jobsDelivered,
+                                      '$deliveredCount',
+                                    ),
                                   ],
                                 ),
                               ],
@@ -1650,7 +1643,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                             : Icons.inventory_2_outlined,
                                       ),
                                 label: Text(
-                                  _isOnlineReady ? 'รับส่งของ' : 'ปิดส่งของ',
+                                  _isOnlineReady
+                                      ? L10n.acceptDelivery
+                                      : L10n.disableDelivery,
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w700,
                                     fontSize: 15,
@@ -1699,8 +1694,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                       ),
                                 label: Text(
                                   _isPassengerReady
-                                      ? 'รับผู้โดยสาร'
-                                      : 'ปิดรับผู้โดยสาร',
+                                      ? L10n.acceptPassenger
+                                      : L10n.disablePassenger,
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w700,
                                     fontSize: 15,
@@ -1713,8 +1708,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         const SizedBox(height: 8),
                         Text(
                           _hasAnyReadyMode
-                              ? 'พิกัดไรเดอร์กำลังอัปเดตแบบเรียลไทม์สำหรับงานที่เปิดรับอยู่'
-                              : 'พิกัดจะเริ่มอัปเดตเมื่อกดเปิดรับส่งของหรือรับผู้โดยสาร',
+                              ? L10n.locationStreamingActive
+                              : L10n.locationStreamingInactive,
                           style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.w600,
@@ -1724,10 +1719,13 @@ class _HomeScreenState extends State<HomeScreen> {
                         const SizedBox(height: 4),
                         Text(
                           !_hasLoadedCreditBalance
-                              ? 'กำลังโหลดเครดิต...'
+                              ? L10n.loadingCredit
                               : !_hasEnoughCreditToOpenReady
-                              ? 'เครดิตต่ำกว่า 500 บาท ไม่สามารถเปิดรับงานได้'
-                              : 'ส่งของ: ${_isOnlineReady ? 'เปิดรับ' : 'ปิดรับ'} | ผู้โดยสาร: ${_isPassengerReady ? 'เปิดรับ' : 'ปิดรับ'}',
+                              ? L10n.creditBelow500CannotGoOnline
+                              : L10n.readyModeSummary(
+                                  _isOnlineReady,
+                                  _isPassengerReady,
+                                ),
                           style: const TextStyle(
                             color: Color(0xFFFFF0DF),
                             fontWeight: FontWeight.w500,
@@ -1750,9 +1748,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   delegate: SliverChildBuilderDelegate((context, index) {
                     final action = dashboardActions[index];
-                    final isHighContrastAction =
-                        action.title == 'ออเดอร์ใหม่' ||
-                        action.title == 'ประวัติ ออเดอร์';
+                    final isHighContrastAction = action.isHighContrastAction;
                     final hideSubtitle = isHighContrastAction;
                     final iconColor = isHighContrastAction
                         ? Colors.black
@@ -1937,17 +1933,59 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class _DashboardAction {
-  final String title;
-  final String subtitle;
+  final DashboardActionId id;
   final IconData icon;
   final Color color;
 
   const _DashboardAction({
-    required this.title,
-    required this.subtitle,
+    required this.id,
     required this.icon,
     required this.color,
   });
+
+  bool get isBottomBarAction =>
+      id == DashboardActionId.wallet ||
+      id == DashboardActionId.todayIncome ||
+      id == DashboardActionId.notifications ||
+      id == DashboardActionId.settings;
+
+  bool get isHighContrastAction =>
+      id == DashboardActionId.newOrders ||
+      id == DashboardActionId.orderHistory;
+
+  String get title {
+    switch (id) {
+      case DashboardActionId.newOrders:
+        return L10n.dashboardNewOrders;
+      case DashboardActionId.orderHistory:
+        return L10n.dashboardOrderHistory;
+      case DashboardActionId.wallet:
+        return L10n.dashboardWallet;
+      case DashboardActionId.todayIncome:
+        return L10n.dashboardTodayIncome;
+      case DashboardActionId.notifications:
+        return L10n.dashboardNotifications;
+      case DashboardActionId.settings:
+        return L10n.dashboardSettings;
+    }
+  }
+
+  String get subtitle {
+    switch (id) {
+      case DashboardActionId.newOrders:
+        return L10n.dashboardNewOrdersSubtitle;
+      case DashboardActionId.orderHistory:
+        return L10n.dashboardOrderHistorySubtitle;
+      case DashboardActionId.wallet:
+        return L10n.dashboardWalletSubtitle;
+      case DashboardActionId.todayIncome:
+        return L10n.dashboardTodayIncomeSubtitle;
+      case DashboardActionId.notifications:
+        return L10n.dashboardNotificationsSubtitle;
+      case DashboardActionId.settings:
+        return L10n.dashboardSettingsSubtitle;
+    }
+  }
 }
 
 class _RiderProfileAvatarButton extends StatelessWidget {
@@ -2072,7 +2110,7 @@ class _AvatarButtonShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: 'ตั้งค่า',
+      message: L10n.dashboardSettings,
       child: Material(
         color: Colors.white.withValues(alpha: 0.18),
         shape: const CircleBorder(),

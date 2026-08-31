@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../call_screen.dart';
 import '../models/user_profile.dart';
 import '../services/notification_service.dart';
@@ -18,14 +19,14 @@ class AdminSupportCallLauncher {
       ticketAssignedAdminUid: assignedAdminUid,
     );
     if (adminUid == null || adminUid.isEmpty) {
-      _showSnack(context, 'ยังไม่มีแอดมินรับเรื่อง — รอแอดมินตอบกลับก่อน');
+      _showSnack(context, L10n.adminCallWaitingReply);
       return;
     }
 
     await startVoiceCallToPeer(
       context: context,
       peerUid: adminUid,
-      peerLabel: 'แอดมิน',
+      peerLabel: L10n.admin,
     );
   }
 
@@ -39,7 +40,7 @@ class AdminSupportCallLauncher {
   }) async {
     final trimmedPeerUid = peerUid.trim();
     if (trimmedPeerUid.isEmpty) {
-      _showSnack(context, 'ไม่พบบัญชีปลายทางสำหรับเริ่มการโทร');
+      _showSnack(context, L10n.noCallPeerAccount);
       return;
     }
 
@@ -49,7 +50,7 @@ class AdminSupportCallLauncher {
         return;
       }
       if (caller.uid == trimmedPeerUid) {
-        throw Exception('ไม่สามารถเริ่มการโทรหาบัญชีตัวเองได้');
+        throw Exception(L10n.cannotCallSelf);
       }
 
       final callee = await _buildPeerProfile(
@@ -88,7 +89,7 @@ class AdminSupportCallLauncher {
       if (!context.mounted) {
         return;
       }
-      _showSnack(context, 'เริ่มการโทรในแอปไม่สำเร็จ: $error');
+      _showSnack(context, L10n.inAppCallFailed(error));
     }
   }
 
@@ -123,7 +124,7 @@ class AdminSupportCallLauncher {
   static Future<UserProfile> _buildCurrentUserProfile() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || user.isAnonymous) {
-      throw Exception('กรุณาเข้าสู่ระบบก่อนโทร');
+      throw Exception(L10n.signInBeforeCall);
     }
 
     try {
@@ -144,7 +145,7 @@ class AdminSupportCallLauncher {
           ? user.displayName!.trim()
           : (user.email?.trim().isNotEmpty == true
                 ? user.email!.trim()
-                : 'ไรเดอร์'),
+                : L10n.rider),
       phoneNumber: user.phoneNumber,
       photoUrl: user.photoURL,
     );
@@ -187,7 +188,7 @@ class AdminSupportCallLauncher {
 
     return UserProfile(
       uid: uid,
-      displayName: fallbackLabel.trim().isEmpty ? 'ผู้ติดต่อ' : fallbackLabel.trim(),
+      displayName: fallbackLabel.trim().isEmpty ? L10n.contactPerson : fallbackLabel.trim(),
       phoneNumber: fallbackPhone,
       photoUrl: fallbackPhotoUrl,
     );

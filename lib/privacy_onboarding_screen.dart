@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'data/legal_content.dart';
 import 'legal_document_screen.dart';
+import 'l10n/l10n.dart';
 
 class PrivacyOnboardingResult {
   const PrivacyOnboardingResult({
@@ -59,7 +60,7 @@ class _PrivacyOnboardingScreenState extends State<PrivacyOnboardingScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text('ความเป็นส่วนตัวและข้อกำหนด'),
+        title: Text(L10n.privacyOnboardingTitle),
         automaticallyImplyLeading: widget.canDismiss,
       ),
       body: SafeArea(
@@ -69,29 +70,26 @@ class _PrivacyOnboardingScreenState extends State<PrivacyOnboardingScreen> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
                 children: [
-                  const Text(
-                    'โปรดอ่านการใช้ข้อมูลส่วนบุคคลของ VANTALAD ก่อนใช้งานต่อ',
-                    style: TextStyle(fontSize: 15, height: 1.5),
+                  Text(
+                    L10n.privacyOnboardingIntro,
+                    style: const TextStyle(fontSize: 15, height: 1.5),
                   ),
                   const SizedBox(height: 16),
                   _LinkCard(
-                    title: 'นโยบายความเป็นส่วนตัว',
-                    subtitle:
-                        'อัปเดตล่าสุด: ${LegalContent.privacyPolicy.updatedAtLabel}',
+                    title: LegalContent.privacyPolicy.title(L10n.en),
+                    subtitle: L10n.legalUpdatedAt(L10n.legalUpdatedAtJun2026),
                     onTap: () => _openDocument(LegalContent.privacyPolicy),
                   ),
                   const SizedBox(height: 10),
                   _LinkCard(
-                    title: 'ข้อกำหนดการใช้งาน',
-                    subtitle:
-                        'อัปเดตล่าสุด: ${LegalContent.termsOfService.updatedAtLabel}',
+                    title: LegalContent.termsOfService.title(L10n.en),
+                    subtitle: L10n.legalUpdatedAt(L10n.legalUpdatedAtJun2026),
                     onTap: () => _openDocument(LegalContent.termsOfService),
                   ),
                   const SizedBox(height: 10),
                   _LinkCard(
-                    title: 'ข้อมูลที่เราเก็บ',
-                    subtitle:
-                        'อัปเดตล่าสุด: ${LegalContent.dataSummary.updatedAtLabel}',
+                    title: LegalContent.dataSummary.title(L10n.en),
+                    subtitle: L10n.legalUpdatedAt(L10n.legalUpdatedAtJun2026),
                     onTap: () => _openDocument(LegalContent.dataSummary),
                   ),
                   const SizedBox(height: 20),
@@ -102,25 +100,25 @@ class _PrivacyOnboardingScreenState extends State<PrivacyOnboardingScreen> {
                       setState(() => _acceptedTerms = value == true);
                     },
                     controlAffinity: ListTileControlAffinity.leading,
-                    title: const Text(
-                      'ยอมรับข้อกำหนดและนโยบายความเป็นส่วนตัว (จำเป็น)',
-                      style: TextStyle(fontWeight: FontWeight.w600),
+                    title: Text(
+                      L10n.privacyAcceptRequired,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
                   ),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     value: _pushOptIn,
                     onChanged: (value) => setState(() => _pushOptIn = value),
-                    title: const Text('รับการแจ้งเตือนงานและออเดอร์'),
-                    subtitle: const Text('ไม่บังคับ'),
+                    title: Text(L10n.privacyJobNotificationsOptional),
+                    subtitle: Text(L10n.optional),
                   ),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     value: _marketingOptIn,
                     onChanged: (value) =>
                         setState(() => _marketingOptIn = value),
-                    title: const Text('รับข่าวโปรโมชัน'),
-                    subtitle: const Text('ไม่บังคับ'),
+                    title: Text(L10n.privacyPromotionsOptional),
+                    subtitle: Text(L10n.optional),
                   ),
                 ],
               ),
@@ -131,7 +129,7 @@ class _PrivacyOnboardingScreenState extends State<PrivacyOnboardingScreen> {
                 width: double.infinity,
                 child: FilledButton(
                   onPressed: _acceptedTerms ? _continue : null,
-                  child: const Text('ดำเนินการต่อ'),
+                  child: Text(L10n.continueAction),
                 ),
               ),
             ),
