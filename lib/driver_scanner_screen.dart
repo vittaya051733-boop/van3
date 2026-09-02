@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -436,28 +435,6 @@ class _DriverScannerScreenState extends State<DriverScannerScreen> {
         _toDouble(data['totalPrice']) ??
         _toDouble(data['subtotal']) ??
         0;
-  }
-
-  double _readShippingFeeAmount(Map<String, dynamic> data) {
-    final direct =
-        _toDouble(data['shippingFee']) ??
-        _toDouble(data['deliveryFee']) ??
-        _toDouble(data['deliveryCharge']) ??
-        _toDouble(data['shipping']) ??
-        0;
-    if (direct > 0) {
-      return direct;
-    }
-
-    final subtotal =
-        _toDouble(data['subtotal']) ?? _toDouble(data['totalPrice']) ?? 0;
-    final grandTotal = _toDouble(data['grandTotal']) ?? subtotal;
-    final delta = grandTotal - subtotal;
-    if (delta > 0) {
-      return double.parse(delta.toStringAsFixed(1));
-    }
-
-    return 0;
   }
 
   double? _toDouble(Object? value) {
