@@ -51,6 +51,15 @@
 		<array>
 			<string>remote-notification</string>
 		</array>
+		<key>CFBundleURLTypes</key>
+		<array>
+			<dict>
+				<key>CFBundleURLSchemes</key>
+				<array>
+					<string>com.googleusercontent.apps.802503541368-d362comn6pe4gf59kotjma4qvf2kb1eb</string>
+				</array>
+			</dict>
+		</array>
 		<key>NSMicrophoneUsageDescription</key>
 		<string>ใช้ไมโครโฟนเพื่อโทรคุยกับลูกค้าและร้านค้า</string>
 		<key>NSCameraUsageDescription</key>

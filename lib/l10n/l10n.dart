@@ -166,6 +166,8 @@ class L10n {
   static String get password => en ? 'Password' : 'รหัสผ่าน';
   static String get forgotPasswordQuestion => en ? 'Forgot password?' : 'ลืมรหัสผ่าน?';
   static String get signInWithGoogle => en ? 'Sign in with Google' : 'เข้าสู่ระบบด้วย Google';
+  static String get signInWithApple =>
+      en ? 'Sign in with Apple' : 'เข้าสู่ระบบด้วย Apple';
   static String get goBack => en ? '← Back' : '← ย้อนกลับ';
   static String get orDivider => en ? 'or' : 'หรือ';
   static String get fillAllFields => en ? 'Please fill in all fields' : 'กรอกข้อมูลให้ครบถ้วน';
@@ -214,6 +216,11 @@ class L10n {
       : 'ไม่สามารถเข้าสู่ระบบด้วย Google ได้ ($code)';
   static String get googleSignInFailed =>
       en ? 'Unable to sign in with Google' : 'ไม่สามารถเข้าสู่ระบบด้วย Google ได้';
+  static String get appleSignInFailed =>
+      en ? 'Unable to sign in with Apple' : 'ไม่สามารถเข้าสู่ระบบด้วย Apple ได้';
+  static String get appleAccountExistsWithDifferentCredential => en
+      ? 'This email already uses another sign-in method. Please use the original method.'
+      : 'อีเมลนี้ใช้วิธีเข้าสู่ระบบอื่นอยู่แล้ว กรุณาเข้าสู่ระบบด้วยวิธีเดิม';
   static String get forgotPassword => en ? 'Forgot password' : 'ลืมรหัสผ่าน';
   static String get email => en ? 'Email' : 'อีเมล';
   static String get emailReadOnly => en ? 'Email (read-only)' : 'อีเมล (อ่านอย่างเดียว)';

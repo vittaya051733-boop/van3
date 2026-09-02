@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -15,6 +16,8 @@ import 'services/privacy_consent_service.dart';
 import 'l10n/l10n.dart';
 import 'utils/app_colors.dart';
 import 'utils/phone_login_helper.dart';
+import 'apple_auth.dart';
+import 'web_apple_auth.dart';
 
 class _RiderLoginLookup {
   const _RiderLoginLookup({
@@ -52,6 +55,36 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _isSocialLoading = false;
   bool _isPasswordVisible = false;
   String? _socialLoadingKey;
+
+  @override
+  void initState() {
+    super.initState();
+    if (kIsWeb) {
+      unawaited(_handleWebOAuthRedirectResult());
+    }
+  }
+
+  Future<void> _handleWebOAuthRedirectResult() async {
+    try {
+      final result = await handleWebOAuthRedirectResult();
+      if (result?.user == null || !mounted) {
+        return;
+      }
+      await _upsertRiderLoginUser(result!.user!);
+      if (!mounted) {
+        return;
+      }
+      await _finishLogin();
+    } on FirebaseAuthException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      if (error.code != 'auth/redirect-initiated' &&
+          error.code != 'redirect-initiated') {
+        _showSnack(L10n.appleSignInFailed);
+      }
+    } catch (_) {}
+  }
 
   Future<void> _finishLogin() async {
     final consentOk = await PrivacyConsentService.instance.ensureConsent(
@@ -346,6 +379,53 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  Future<void> _signInWithApple() async {
+    setState(() {
+      _isSocialLoading = true;
+      _socialLoadingKey = 'apple';
+    });
+
+    try {
+      final userCredential = await signInWithApple();
+      if (userCredential.user == null) {
+        throw FirebaseAuthException(code: 'user-not-found', message: L10n.userMissingAfterSignIn);
+      }
+      await _upsertRiderLoginUser(userCredential.user!);
+
+      if (!mounted) return;
+      setState(() => _isSocialLoading = false);
+      await _finishLogin();
+    } on FirebaseAuthException catch (e) {
+      if (e.code == 'popup-closed-by-user' ||
+          e.code == 'redirect-initiated' ||
+          e.code == 'auth/redirect-initiated') {
+        return;
+      }
+      if (kDebugMode) {
+        debugPrint('Apple sign-in failed: ${e.code} ${e.message ?? ''}');
+      }
+      if (e.code == 'account-exists-with-different-credential' ||
+          e.code == 'auth/account-exists-with-different-credential') {
+        _showSnack(L10n.appleAccountExistsWithDifferentCredential);
+      } else {
+        _showSnack(L10n.appleSignInFailed);
+      }
+    } catch (error, stackTrace) {
+      if (kDebugMode) {
+        debugPrint('Unexpected Apple sign-in error: $error');
+        debugPrint('$stackTrace');
+      }
+      _showSnack(L10n.appleSignInFailed);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSocialLoading = false;
+          _socialLoadingKey = null;
+        });
+      }
+    }
+  }
+
   void _showSnack(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
@@ -492,6 +572,20 @@ class _LoginScreenState extends State<LoginScreen> {
                 buttonKey: 'google',
               ),
             ),
+            if (isAppleSignInSupported) ...[
+              const SizedBox(height: 14),
+              SizedBox(
+                width: double.infinity,
+                child: _socialButton(
+                  onPressed: _isSocialLoading ? null : _signInWithApple,
+                  label: L10n.signInWithApple,
+                  backgroundColor: Colors.black,
+                  foregroundColor: Colors.white,
+                  buttonKey: 'apple',
+                  icon: Icons.apple,
+                ),
+              ),
+            ],
             const SizedBox(height: 24),
             Center(
               child: GestureDetector(
