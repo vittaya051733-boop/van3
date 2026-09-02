@@ -507,8 +507,8 @@ class _RiderJobsScreenState extends State<RiderJobsScreen> {
                                       ? L10n.distanceToPickupDash
                                       : L10n.distanceToShopDash)
                                   : (isTravelOrder
-                                      ? L10n.distanceToPickupKm(distanceKm!)
-                                      : L10n.distanceToShopKm(distanceKm!)),
+                                      ? L10n.distanceToPickupKm(distanceKm)
+                                      : L10n.distanceToShopKm(distanceKm)),
                             style: const TextStyle(
                               color: Color(0xFF6B7280),
                               fontSize: 12,
