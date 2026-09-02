@@ -16,7 +16,6 @@ class DrivingRouteService {
   DrivingRouteService._();
 
   static const Duration _requestTimeout = Duration(seconds: 15);
-  static const String _functionsRegion = 'asia-southeast1';
 
   static Future<DrivingRouteResult?> fetchDrivingRoute({
     required double originLat,
